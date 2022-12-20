@@ -105,14 +105,14 @@ def InitDistTensorOp : Dist_Op<"init_dist_tensor", [SameVariadicOperandSize, Pur
           - the process-local offsets
           - the distributed team
     }];
-    let arguments = (ins Variadic<Index>:$g_shape, AnyType:$p_tensor, Variadic<Index>:$l_offsets, AnyType:$team);
+    let arguments = (ins AnyType:$p_tensor, AnyType:$team, Variadic<Index>:$g_shape, Variadic<Index>:$l_offsets);
     let results = (outs Dist_Tensor);
     let builders = [
         // auto-deduce return type
-        OpBuilder<(ins "::mlir::ValueRange":$g_shape, "::mlir::Value":$p_tensor, "::mlir::ValueRange":$l_offsets, "::mlir::Value":$team), [{
+        OpBuilder<(ins "::mlir::Value":$p_tensor, "::mlir::Value":$team, "::mlir::ValueRange":$g_shape, "::mlir::ValueRange":$l_offsets), [{
             build($_builder, $_state,
                   ::imex::dist::DistTensorType::get($_builder.getContext(), p_tensor.getType().dyn_cast<::imex::ptensor::PTensorType>()),
-                  g_shape, p_tensor, l_offsets, team);
+                  p_tensor, team, g_shape, l_offsets);
         }]>,
     ];
 }

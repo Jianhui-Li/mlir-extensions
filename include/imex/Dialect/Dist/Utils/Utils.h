@@ -38,8 +38,8 @@ inline ::mlir::Value
 createDistTensor(::mlir::Location &loc, ::mlir::OpBuilder &builder,
                  ::mlir::ValueRange gshape, ::mlir::Value pt,
                  ::mlir::ValueRange loffsets, ::mlir::Value team) {
-  return builder.create<::imex::dist::InitDistTensorOp>(loc, gshape, pt,
-                                                        loffsets, team);
+  return builder.create<::imex::dist::InitDistTensorOp>(loc, pt, team, gshape,
+                                                        loffsets);
 }
 
 // create operation returning global shape of DistTensor

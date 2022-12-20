@@ -1,5 +1,4 @@
 builtin.module(convert-ptensor-to-linalg
-    convert-shape-to-std
     arith-bufferize
     func.func(empty-tensor-to-alloc-tensor
             scf-bufferize

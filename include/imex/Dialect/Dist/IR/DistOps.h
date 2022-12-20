@@ -27,7 +27,7 @@ namespace ptensor {
 class PTensorType;
 } // namespace ptensor
 namespace dist {
-enum INFO : int { GSHAPE, LTENSOR, LOFFSETS, TEAM, INFO_LAST };
+enum DIST_META : int { LTENSOR, TEAM, GSHAPE, LOFFSETS, DIST_META_LAST };
 extern ::imex::ptensor::PTensorType getPTensorType(::mlir::Value t);
 } // namespace dist
 } // namespace imex

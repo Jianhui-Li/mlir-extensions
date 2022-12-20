@@ -39,18 +39,6 @@
 namespace imex {
 namespace dist {
 
-/// After full conversion the cast is expected
-/// to have no use. FIXME Is there a better/cleaner way to do this?
-// ::mlir::Value
-// materializeDistTensor(::mlir::OpBuilder &builder, ::mlir::Location loc,
-//                       ::mlir::Value gshape, ::mlir::Value ltensor,
-//                       ::mlir::Value loffsets, ::mlir::Value team) {
-//   // materialize gshape and loffsets into memrefs
-//   auto gShape = createValuesFromMemRef(builder, loc, gshape);
-//   auto lOffsets = createValuesFromMemRef(builder, loc, loffsets);
-//   return createDistTensor(loc, builder, gShape, ltensor, lOffsets, team);
-// };
-
 namespace {
 
 // create function prototype fo given function name, arg-types and
@@ -86,7 +74,7 @@ struct RuntimePrototypesOpConverter
     auto mod = op->getParentOp();
     assert(::mlir::isa<mlir::ModuleOp>(mod));
     ::mlir::ModuleOp module = ::mlir::cast<mlir::ModuleOp>(mod);
-    auto dtype = rewriter.getI64Type();
+    // auto dtype = rewriter.getI64Type();
     auto indexType = rewriter.getIndexType();
     auto dtypeType = rewriter.getIntegerType(sizeof(int) * 8);
     auto opType =
@@ -95,10 +83,12 @@ struct RuntimePrototypesOpConverter
     requireFunc(loc, rewriter, module, "_idtr_nprocs", {indexType},
                 {indexType});
     requireFunc(loc, rewriter, module, "_idtr_prank", {indexType}, {indexType});
+    // autp mrType = ::mlir::UnrankedMemRefType::get(indexType, {});
     requireFunc(
         loc, rewriter, module, "_idtr_reduce_all",
         // {getMemRefType(rewriter.getContext(), 0, dtype), dtypeType, opType},
-        {::mlir::UnrankedMemRefType::get(dtype, {}), dtypeType, opType}, {});
+        // {::mlir::UnrankedMemRefType::get(dtype, {}), dtypeType, opType}, {});
+        {indexType, indexType, indexType, indexType, dtypeType, opType}, {});
     rewriter.eraseOp(op);
     return ::mlir::success();
   }
@@ -165,14 +155,14 @@ struct ExtractFromDistOpConverter : public ::mlir::OpConversionPattern<OP> {
     if (defOp) {
       // here this is from a normal InitDistTensorOp; we can extract operands
       // from it
-      if constexpr (std::is_same_v<OP, ::imex::dist::GlobalShapeOfOp>) {
-        rewriter.replaceOp(op, defOp.getGShape());
-      } else if constexpr (std::is_same_v<OP, ::imex::dist::LocalTensorOfOp>) {
+      if constexpr (std::is_same_v<OP, ::imex::dist::LocalTensorOfOp>) {
         rewriter.replaceOp(op, defOp.getPTensor());
-      } else if constexpr (std::is_same_v<OP, ::imex::dist::LocalOffsetsOfOp>) {
-        rewriter.replaceOp(op, defOp.getLOffsets());
       } else if constexpr (std::is_same_v<OP, ::imex::dist::TeamOfOp>) {
         rewriter.replaceOp(op, defOp.getTeam());
+      } else if constexpr (std::is_same_v<OP, ::imex::dist::GlobalShapeOfOp>) {
+        rewriter.replaceOp(op, defOp.getGShape());
+      } else if constexpr (std::is_same_v<OP, ::imex::dist::LocalOffsetsOfOp>) {
+        rewriter.replaceOp(op, defOp.getLOffsets());
       }
     } else {
       // disttensor block args get type-converted into
@@ -185,18 +175,27 @@ struct ExtractFromDistOpConverter : public ::mlir::OpConversionPattern<OP> {
 
       // here this is from a block arg; we can extract operands from the
       // inserted cast
-      if constexpr (std::is_same_v<OP, ::imex::dist::GlobalShapeOfOp>) {
-        rewriter.replaceOp(op,
-                           createValuesFromMemRef(rewriter, op.getLoc(),
-                                                  castOp.getInputs()[GSHAPE]));
-      } else if constexpr (std::is_same_v<OP, ::imex::dist::LocalTensorOfOp>) {
+      if constexpr (std::is_same_v<OP, ::imex::dist::LocalTensorOfOp>) {
         rewriter.replaceOp(op, castOp.getInputs()[LTENSOR]);
-      } else if constexpr (std::is_same_v<OP, ::imex::dist::LocalOffsetsOfOp>) {
-        rewriter.replaceOp(
-            op, createValuesFromMemRef(rewriter, op.getLoc(),
-                                       castOp.getInputs()[LOFFSETS]));
       } else if constexpr (std::is_same_v<OP, ::imex::dist::TeamOfOp>) {
         rewriter.replaceOp(op, castOp.getInputs()[TEAM]);
+      } else if (castOp.getInputs().size() >
+                 GSHAPE) { // if rank==0 there might be no gshape/loffs args in
+                           // cast-op
+        if constexpr (std::is_same_v<OP, ::imex::dist::GlobalShapeOfOp>) {
+          rewriter.replaceOp(
+              op, createValuesFromMemRef(rewriter, op.getLoc(),
+                                         castOp.getInputs()[GSHAPE]));
+        } else if constexpr (std::is_same_v<OP,
+                                            ::imex::dist::LocalOffsetsOfOp>) {
+          rewriter.replaceOp(
+              op, createValuesFromMemRef(rewriter, op.getLoc(),
+                                         castOp.getInputs()[LOFFSETS]));
+        } else {
+          assert(!"Unknown dist meta item requested");
+        }
+      } else {
+        rewriter.replaceOp(op, ::mlir::ValueRange{});
       }
     }
     return ::mlir::success();
@@ -383,16 +382,36 @@ struct AllReduceOpConverter
                   ::mlir::ConversionPatternRewriter &rewriter) const override {
     // get guid and rank and call runtime function
     auto loc = op.getLoc();
+    auto mRef = adaptor.getData();
+    auto mRefType = mRef.getType().dyn_cast<::mlir::MemRefType>();
+    if (!mRefType)
+      return ::mlir::failure();
+
+    auto rank = createIndex(loc, rewriter, mRefType.getRank());
     auto opV = rewriter.create<::mlir::arith::ConstantOp>(loc, op.getOp());
-    auto rTnsr = adaptor.getData();
     auto dtype = createInt<sizeof(int) * 8>(loc, rewriter, 5); // FIXME getDType
     auto fsa = rewriter.getStringAttr("_idtr_reduce_all");
-    auto uMemRef = rewriter.create<::mlir::memref::CastOp>(
-        loc, ::mlir::UnrankedMemRefType::get(rewriter.getI64Type(), {}), rTnsr);
+    auto aptr = rewriter.create<::mlir::memref::ExtractAlignedPointerAsIndexOp>(
+        loc, mRef);
+    auto meta =
+        rewriter.create<::mlir::memref::ExtractStridedMetadataOp>(loc, mRef);
+    auto dataPtr =
+        rewriter.create<::mlir::arith::AddIOp>(loc, aptr, meta.getOffset());
+    auto idxType = rewriter.getIndexType();
+    auto sizes =
+        createMemRefFromElements(rewriter, loc, idxType, meta.getSizes());
+    auto strides =
+        createMemRefFromElements(rewriter, loc, idxType, meta.getStrides());
+    auto sizePtr =
+        rewriter.create<::mlir::memref::ExtractAlignedPointerAsIndexOp>(loc,
+                                                                        sizes);
+    auto stridePtr =
+        rewriter.create<::mlir::memref::ExtractAlignedPointerAsIndexOp>(
+            loc, strides);
     rewriter.create<::mlir::func::CallOp>(
         loc, fsa, ::mlir::TypeRange(),
-        ::mlir::ValueRange({uMemRef, dtype, opV}));
-    rewriter.replaceOp(op, rTnsr);
+        ::mlir::ValueRange({rank, dataPtr, sizePtr, stridePtr, dtype, opV}));
+    rewriter.replaceOp(op, mRef);
     return ::mlir::success();
   }
 };
@@ -416,14 +435,17 @@ struct ConvertDistToStandardPass
     // DistTensor gets converted into its individual members
     auto convDTensor = [&ctxt](::imex::dist::DistTensorType type,
                                ::mlir::SmallVectorImpl<::mlir::Type> &types) {
+      const auto off = types.size();
       auto rank = type.getPTensorType().getRank();
-      auto mrTyp =
-          ::mlir::MemRefType::get(::std::array<int64_t, 1>{rank ? rank : 1},
-                                  ::mlir::IndexType::get(&ctxt));
-      types.push_back(mrTyp);
-      types.push_back(type.getPTensorType());
-      types.push_back(mrTyp);
-      types.push_back(::mlir::IndexType::get(&ctxt));
+      types.resize(off + DIST_META_LAST - (rank ? 0 : 2));
+      types[LTENSOR + off] = type.getPTensorType();
+      types[TEAM + off] = ::mlir::IndexType::get(&ctxt);
+      if (rank) {
+        auto mrTyp = ::mlir::MemRefType::get(::std::array<int64_t, 1>{rank},
+                                             ::mlir::IndexType::get(&ctxt));
+        types[LOFFSETS + off] = mrTyp;
+        types[GSHAPE + off] = mrTyp;
+      }
       return ::mlir::success();
     };
 
@@ -458,14 +480,19 @@ struct ConvertDistToStandardPass
         [](::mlir::OpBuilder &builder, ::mlir::Location loc,
            ::imex::dist::DistTensorType resultType, ::mlir::Value value,
            ::mlir::SmallVectorImpl<::mlir::Value> &values) {
-          values.push_back(createMemRefFromElements(
-              builder, loc, builder.getIndexType(),
-              createGlobalShapeOf(loc, builder, value)));
-          values.push_back(createLocalTensorOf(loc, builder, value));
-          values.push_back(createMemRefFromElements(
-              builder, loc, builder.getIndexType(),
-              createLocalOffsetsOf(loc, builder, value)));
-          values.push_back(createTeamOf(loc, builder, value));
+          const auto off = values.size();
+          auto rank = resultType.getPTensorType().getRank();
+          values.resize(off + DIST_META_LAST - (rank ? 0 : 2));
+          values[LTENSOR + off] = createLocalTensorOf(loc, builder, value);
+          values[TEAM + off] = createTeamOf(loc, builder, value);
+          if (rank) {
+            values[GSHAPE + off] = createMemRefFromElements(
+                builder, loc, builder.getIndexType(),
+                createGlobalShapeOf(loc, builder, value));
+            values[LOFFSETS + off] = createMemRefFromElements(
+                builder, loc, builder.getIndexType(),
+                createLocalOffsetsOf(loc, builder, value));
+          }
           return ::mlir::success();
         });
 

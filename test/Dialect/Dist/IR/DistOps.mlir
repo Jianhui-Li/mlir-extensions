@@ -27,11 +27,11 @@ func.func @test_prank(%arg0: index) -> index {
 // CHECK-NEXT: "dist.prank"(%arg0) : (index) -> index
 
 // -----
-func.func @test_init_dist_tensor(%gshape: index, %pt: !ptensor.ptensor<1 x i64>, %loffs: index, %team: i64) -> !dist.dtensor<<1 x i64>> {
-    %1 = "dist.init_dist_tensor"(%gshape, %pt, %loffs, %team) : (index, !ptensor.ptensor<1 x i64>, index, i64) -> !dist.dtensor<<1 x i64>>
+func.func @test_init_dist_tensor(%pt: !ptensor.ptensor<1 x i64>, %team: i64, %gshape: index, %loffs: index) -> !dist.dtensor<<1 x i64>> {
+    %1 = "dist.init_dist_tensor"(%pt, %team, %gshape, %loffs) : (!ptensor.ptensor<1 x i64>, i64, index, index) -> !dist.dtensor<<1 x i64>>
     return %1 : !dist.dtensor<<1 x i64>>
 }
-// CHECK-LABEL: func.func @test_init_dist_tensor(%arg0: index, %arg1: !ptensor.ptensor<1 x i64>, %arg2: index, %arg3: i64) -> !dist.dtensor<<1 x i64>> {
+// CHECK-LABEL: func.func @test_init_dist_tensor(%arg0: !ptensor.ptensor<1 x i64>, %arg1: i64, %arg2: index, %arg3: index) -> !dist.dtensor<<1 x i64>> {
 // CHECK-NEXT: dist.init_dist_tensor
 
 // -----

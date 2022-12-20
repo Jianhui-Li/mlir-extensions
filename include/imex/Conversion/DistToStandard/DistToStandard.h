@@ -36,10 +36,6 @@ void populateDistToStandardConversionPatterns(
 std::unique_ptr<::mlir::OperationPass<::mlir::ModuleOp>>
 createConvertDistToStandardPass();
 
-extern void createDistRTFuncDefs(::mlir::Location &loc,
-                                 ::mlir::OpBuilder &builder,
-                                 ::mlir::ModuleOp &module);
-
 } // namespace imex
 
 #endif // _DistToStandard_H_INCLUDED_
