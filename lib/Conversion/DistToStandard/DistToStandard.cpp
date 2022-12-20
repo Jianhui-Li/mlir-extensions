@@ -389,7 +389,9 @@ struct AllReduceOpConverter
 
     auto rank = createIndex(loc, rewriter, mRefType.getRank());
     auto opV = rewriter.create<::mlir::arith::ConstantOp>(loc, op.getOp());
-    auto dtype = createInt<sizeof(int) * 8>(loc, rewriter, 5); // FIXME getDType
+    auto dtype = createInt<sizeof(int) * 8>(
+        loc, rewriter,
+        static_cast<int>(::imex::ptensor::fromMLIR(mRefType.getElementType())));
     auto fsa = rewriter.getStringAttr("_idtr_reduce_all");
     auto aptr = rewriter.create<::mlir::memref::ExtractAlignedPointerAsIndexOp>(
         loc, mRef);

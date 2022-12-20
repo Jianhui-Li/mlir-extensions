@@ -51,9 +51,33 @@ inline ::mlir::Type toMLIR(::mlir::OpBuilder &b, DType dt) {
   case I1:
     return b.getI1Type();
   default:
-    std::runtime_error("Cannot handle unknown DType");
+    assert(!"Cannot handle unknown DType");
   };
   return {};
+}
+
+inline DType fromMLIR(const ::mlir::Type &typ) {
+  if (typ.isF64())
+    return F64;
+  else if (typ.isF32())
+    return F32;
+  else if (typ.isIntOrIndex()) {
+    auto w = typ.getIntOrFloatBitWidth();
+    auto u = !typ.isIndex() && typ.isUnsignedInteger();
+    switch (w) {
+    case 64:
+      return u ? U64 : I64;
+    case 32:
+      return u ? U32 : I32;
+    case 16:
+      return u ? U16 : I16;
+    case 8:
+      return u ? U8 : I8;
+    case 1:
+      return I1;
+    };
+  }
+  assert(!"Type not supprted by PTensor");
 }
 
 /// The set of supported elementwise binary operations
