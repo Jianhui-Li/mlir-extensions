@@ -40,27 +40,53 @@ func.func @test_create(%arg0: index, %arg1: index, %arg2: i64) -> !ptensor.ptens
 
 // -----
 func.func @test_ewbin(%arg0: !ptensor.ptensor<1 x i64>) -> !ptensor.ptensor<1 x i64> {
-    %0 = "ptensor.ewbin"(%arg0, %arg0) {op = 0 : i32} : (!ptensor.ptensor<1 x i64>, !ptensor.ptensor<1 x i64>) -> !ptensor.ptensor<1 x i64>
+    %0 = "ptensor.ewbin"(%arg0, %arg0) {op = 23 : i32} : (!ptensor.ptensor<1 x i64>, !ptensor.ptensor<1 x i64>) -> !ptensor.ptensor<1 x i64>
     return %0 : !ptensor.ptensor<1 x i64>
 }
-// CHECK-LABEL: @test_ewbin
-// CHECK: [[C0:%.*]] = memref.dim
-// CHECK: tensor.empty([[C0]]) : tensor<?xi64>
-// CHECK: linalg.generic{{.*}}["parallel"]
-// CHECK: return %{{.}} : memref<?xi64, strided<[?], offset: ?>>
+// CHECK-LABEL: #map = affine_map<(d0) -> (d0)>
+// CHECK-LABEL: @test_ewbin(
+// CHECK: shape.shape_of
+// CHECK: shape.shape_of
+// CHECK: shape.broadcast
+// CHECK: shape.get_extent
+// CHECK: tensor.empty
+// CHECK: linalg.generic {indexing_maps = [#map, #map, #map], iterator_types = ["parallel"]}
+// CHECK: arith.muli
+
+// -----
+func.func @test_ewbin_bcast(%arg0: !ptensor.ptensor<2 x i64>, %arg1: !ptensor.ptensor<0 x i64>) -> !ptensor.ptensor<2 x i64> {
+    %0 = "ptensor.ewbin"(%arg0, %arg1) {op = 0 : i32} : (!ptensor.ptensor<2 x i64>, !ptensor.ptensor<0 x i64>) -> !ptensor.ptensor<2 x i64>
+    return %0 : !ptensor.ptensor<2 x i64>
+}
+// CHECK-LABEL: #map = affine_map<(d0, d1) -> (d0, d1)>
+// CHECK: #map1 = affine_map<(d0, d1) -> ()>
+// CHECK-LABEL: @test_ewbin_bcast
+// CHECK: shape.shape_of
+// CHECK: shape.shape_of
+// CHECK: shape.broadcast
+// CHECK: shape.get_extent
+// CHECK: shape.get_extent
+// CHECK: tensor.empty
+// CHECK: linalg.generic {indexing_maps = [#map, #map1, #map], iterator_types = ["parallel", "parallel"]}
+// CHECK: arith.addi
 
 // -----
 func.func @test_ewbin_3d(%arg0: !ptensor.ptensor<3 x i64>) -> !ptensor.ptensor<3 x i64> {
     %0 = "ptensor.ewbin"(%arg0, %arg0) {op = 0 : i32} : (!ptensor.ptensor<3 x i64>, !ptensor.ptensor<3 x i64>) -> !ptensor.ptensor<3 x i64>
     return %0 : !ptensor.ptensor<3 x i64>
 }
-// CHECK-LABEL: @test_ewbin
-// CHECK: [[C0:%.*]] = memref.dim
-// CHECK: [[C1:%.*]] = memref.dim
-// CHECK: [[C2:%.*]] = memref.dim
-// CHECK: tensor.empty([[C0]], [[C1]], [[C2]]) : tensor<?x?x?xi64>
+// CHECK-LABEL: #map = affine_map<(d0, d1, d2) -> (d0, d1, d2)>
+// CHECK-LABEL: @test_ewbin_3d
+// CHECK: shape.shape_of
+// CHECK: shape.shape_of
+// CHECK: shape.broadcast
+// CHECK: shape.get_extent
+// CHECK: shape.get_extent
+// CHECK: shape.get_extent
+// CHECK: tensor.empty
 // CHECK: linalg.generic{{.*}}["parallel", "parallel", "parallel"]
-// CHECK: return %{{.}} : memref<?x?x?xi64, strided<[?, ?, ?], offset: ?>>
+// CHECK: arith.addi
+// CHECK: return %{{.+}} : memref<?x?x?xi64, strided<[?, ?, ?], offset: ?>>
 
 // -----
 func.func @test_reduction(%arg0: !ptensor.ptensor<1 x i64>) -> i64 {
@@ -79,7 +105,7 @@ func.func @test_reduction_3d(%arg0: !ptensor.ptensor<3 x i64>) -> i64 {
     %1 = builtin.unrealized_conversion_cast %0 : !ptensor.ptensor<0 x i64> to i64
     return %1 : i64
 }
-// CHECK-LABEL: @test_reduction
+// CHECK-LABEL: @test_reduction_3d
 // CHECK: [[C0:%.*]] = linalg.fill
 // CHECK: linalg.generic{{.*}}["reduction", "reduction", "reduction"]}{{.*}}outs([[C0]]
 // CHECK: return %{{.}} : i64

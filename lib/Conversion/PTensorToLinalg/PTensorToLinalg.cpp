@@ -42,6 +42,7 @@
 #include <mlir/Dialect/LLVMIR/LLVMDialect.h>
 #include <mlir/Dialect/Linalg/IR/Linalg.h>
 #include <mlir/Dialect/Linalg/Utils/Utils.h>
+#include <mlir/Dialect/Shape/IR/Shape.h>
 // #include <mlir/Dialect/memref/IR/MemRef.h>
 #include <mlir/Dialect/Bufferization/IR/Bufferization.h>
 #include <mlir/Dialect/Tensor/IR/Tensor.h>
@@ -269,7 +270,7 @@ struct ARangeLowering
     // init tensor
     auto elTyp = retPtTyp.getElementType();
     auto rank = retPtTyp.getRank();
-    auto tensor = createEmptyTensor(rewriter, loc, elTyp, {count}).getResult();
+    auto tensor = createEmptyTensor(rewriter, loc, elTyp, {count});
 
     // The loop body fills with arange values
     // accepting no input, the lambda simply captures start and step
@@ -314,8 +315,7 @@ struct CreateLowering
 
     // init tensor
     auto elTyp = ::imex::ptensor::toMLIR(rewriter, op.getDType());
-    auto tensor =
-        createEmptyTensor(rewriter, loc, elTyp, adaptor.getShape()).getResult();
+    auto tensor = createEmptyTensor(rewriter, loc, elTyp, adaptor.getShape());
 
     auto res = createParFor(
         loc, rewriter, retPtTyp.getRank(), tensor, ::mlir::ValueRange(),
@@ -442,72 +442,77 @@ struct EWBinOpLowering
         op.getLhs().getType().dyn_cast<::imex::ptensor::PTensorType>();
     auto rhsPtTyp =
         op.getRhs().getType().dyn_cast<::imex::ptensor::PTensorType>();
-    if (!lhsPtTyp || !rhsPtTyp) {
+    if (!lhsPtTyp || !rhsPtTyp ||
+        lhsPtTyp.getMemRefType().getElementType() !=
+            rhsPtTyp.getMemRefType().getElementType()) {
+      // FIXME type casting
       // fail if not, will be retried if operands get converted elsewhere
       return ::mlir::failure();
     }
     // we expect tensorType as operands
-    auto lhsTnsrTyp = lhsPtTyp.getMemRefType();
-    auto rhsTnsrTyp = rhsPtTyp.getMemRefType();
-    // input tensors might have compatible but different types
-    assert(adaptor.getLhs().getType() == adaptor.getRhs().getType());
-
-    // the element type of a binop depends on the input arguments and the
-    // operation itself we assume this had beeen taken care of and simply use
-    // the op's converted type
-    auto retPtTyp =
-        op.getResult().getType().dyn_cast<::imex::ptensor::PTensorType>();
-    assert(retPtTyp);
-    auto retTyp = retPtTyp.getMemRefType();
-    auto elTyp = retTyp.getElementType();
+    auto lhsMRTyp = lhsPtTyp.getMemRefType();
+    auto rhsMRTyp = rhsPtTyp.getMemRefType();
+    auto lhsRank = lhsMRTyp.getRank();
+    auto rhsRank = rhsMRTyp.getRank();
+    auto elTyp = lhsMRTyp.getElementType();
 
     // get the input as tensors
-    auto lhsTnsr = rewriter.create<::imex::ptensor::ExtractMemRefOp>(
-        loc, lhsTnsrTyp, op.getLhs());
-    auto rhsTnsr = rewriter.create<::imex::ptensor::ExtractMemRefOp>(
-        loc, rhsTnsrTyp, op.getRhs());
+    auto lhsMR = rewriter.create<::imex::ptensor::ExtractMemRefOp>(
+        loc, lhsMRTyp, op.getLhs());
+    auto rhsMR = rewriter.create<::imex::ptensor::ExtractMemRefOp>(
+        loc, rhsMRTyp, op.getRhs());
+    auto lhsTnsr = rewriter.create<::mlir::bufferization::ToTensorOp>(
+        loc, lhsPtTyp.getTensorType(), lhsMR);
+    auto rhsTnsr = rewriter.create<::mlir::bufferization::ToTensorOp>(
+        loc, rhsPtTyp.getTensorType(), rhsMR);
 
-    // build tensor using the resulting element type
-    // the shape is not statically known, we need to retrieve it (it's the same
-    // as the input shapes)
-    // FIXME shape broadcasting: input tensors might have compatible but
-    // different shapes
-    auto rank = static_cast<unsigned>(retTyp.getRank());
-    llvm::SmallVector<::mlir::Value> shapeVVec(rank);
-    llvm::SmallVector<mlir::utils::IteratorType> iterators(rank);
-    for (auto i : llvm::seq<unsigned>(0u, rank)) {
-      shapeVVec[i] =
-          rewriter.create<::mlir::memref::DimOp>(loc, lhsTnsr, i).getResult();
-      // iterate in parallel
-      iterators[i] = mlir::utils::IteratorType::parallel;
+    // determine broadcasted shape of result
+    auto idxType = rewriter.getIndexType();
+    auto rank = static_cast<unsigned>(std::max(lhsRank, rhsRank));
+    auto lhsShape = rewriter.create<::mlir::shape::ShapeOfOp>(loc, lhsTnsr);
+    auto rhsShape = rewriter.create<::mlir::shape::ShapeOfOp>(loc, rhsTnsr);
+    auto resShapeType = ::mlir::RankedTensorType::get(
+        ::std::array<int64_t, 1>{::mlir::ShapedType::kDynamic}, idxType);
+    auto resShape = rewriter.create<::mlir::shape::BroadcastOp>(
+        loc, resShapeType, lhsShape, rhsShape, ::mlir::StringAttr{});
+
+    // Init empty result tensor
+    llvm::SmallVector<::mlir::Value> resShapeV(rank);
+    for (unsigned i = 0; i < rank; ++i) {
+      auto idx = createIndex(loc, rewriter, i);
+      auto tmp =
+          rewriter.createOrFold<::mlir::shape::GetExtentOp>(loc, resShape, idx);
+      resShapeV[i] = rewriter.createOrFold<::mlir::shape::SizeToIndexOp>(
+          loc, rewriter.getIndexType(), tmp);
     }
-
-    // init tensor
-    auto tensor =
-        createEmptyTensor(rewriter, loc, elTyp, shapeVVec).getResult();
+    auto tensor = createEmptyTensor(rewriter, loc, elTyp, resShapeV);
+    auto resMRTyp = getMemRefType(rewriter.getContext(), rank, elTyp);
 
     // Get signless operands into vec
-    llvm::SmallVector<mlir::Value, 2> oprnds = {
-        rewriter.create<::mlir::bufferization::ToTensorOp>(
-            loc, lhsPtTyp.getTensorType(), lhsTnsr),
-        rewriter.create<::mlir::bufferization::ToTensorOp>(
-            loc, rhsPtTyp.getTensorType(), rhsTnsr)};
-
-    // all maps are identity maps
-    auto inpMap =
-        ::mlir::AffineMap::getMultiDimIdentityMap(rank, rewriter.getContext());
-    const ::mlir::AffineMap maps[] = {inpMap, inpMap, inpMap};
+    // llvm::SmallVector<mlir::Value, 2> oprnds = { lhsTnsr, rhsTnsr };
 
     // create binop as linalg::generic
+    const ::mlir::AffineMap maps[] = {
+        ::mlir::AffineMap::getMinorIdentityMap(rank, lhsRank,
+                                               rewriter.getContext()),
+        ::mlir::AffineMap::getMinorIdentityMap(rank, rhsRank,
+                                               rewriter.getContext()),
+        ::mlir::AffineMap::getMultiDimIdentityMap(rank, rewriter.getContext())};
+    llvm::SmallVector<mlir::utils::IteratorType> iterators(
+        rank, ::mlir::utils::IteratorType::parallel);
+
     const ::imex::ptensor::EWBinOpId binOpId =
         (::imex::ptensor::EWBinOpId)adaptor.getOp()
             .cast<::mlir::IntegerAttr>()
             .getInt();
     auto bodyBuilder = getBodyBuilder(binOpId, elTyp);
     auto resTnsr = rewriter.create<::mlir::linalg::GenericOp>(
-        loc, tensor.getType(), oprnds, tensor, maps, iterators, bodyBuilder);
+        loc, tensor.getType(), ::mlir::ValueRange{lhsTnsr, rhsTnsr}, tensor,
+        maps, iterators, bodyBuilder);
+
+    // done. replace op with memref
     rewriter.replaceOpWithNewOp<::mlir::bufferization::ToMemrefOp>(
-        op, retPtTyp.getMemRefType(), resTnsr.getResult(0));
+        op, resMRTyp, resTnsr.getResult(0));
 
     return ::mlir::success();
   }
@@ -582,8 +587,7 @@ struct ReductionOpLowering
     llvm::SmallVector<::mlir::Value> shapeVVec(rank, zeroI);
     // create new tensor
     auto zero = createInt(loc, rewriter, 0);
-    auto tensor =
-        createEmptyTensor(rewriter, loc, sElTyp, shapeVVec).getResult();
+    auto tensor = createEmptyTensor(rewriter, loc, sElTyp, shapeVVec);
     auto tnsr = rewriter.create<::mlir::linalg::FillOp>(loc, zero, tensor);
 
     // rank/num-dims of input
@@ -657,6 +661,7 @@ struct ConvertPTensorToLinalgPass
     target.addLegalDialect<::mlir::arith::ArithDialect>();
     target.addLegalDialect<::mlir::memref::MemRefDialect>();
     target.addLegalDialect<::mlir::tensor::TensorDialect>();
+    target.addLegalDialect<::mlir::shape::ShapeDialect>();
     target.addLegalDialect<::mlir::bufferization::BufferizationDialect>();
     target.addLegalOp<::mlir::UnrealizedConversionCastOp>(); // FIXME
     // make sure function boundaries use tensors (not PTensors)

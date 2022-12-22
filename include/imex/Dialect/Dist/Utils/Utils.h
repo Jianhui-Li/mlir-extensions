@@ -82,7 +82,7 @@ inline auto getTensorType(::mlir::MLIRContext *ctxt, int64_t rank,
 /// create an empty RankedTensor with tiven shape and elType
 inline auto createEmptyTensor(::mlir::OpBuilder &builder, ::mlir::Location loc,
                               ::mlir::Type elType, ::mlir::ValueRange shp) {
-  return builder.create<::mlir::tensor::EmptyOp>(
+  return builder.createOrFold<::mlir::tensor::EmptyOp>(
       loc, getTensorType(builder.getContext(), shp.size(), elType), shp);
 }
 

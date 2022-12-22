@@ -28,6 +28,7 @@
 #include <mlir/Dialect/Func/Transforms/DecomposeCallGraphTypes.h>
 #include <mlir/Dialect/Func/Transforms/FuncConversions.h>
 #include <mlir/Dialect/Linalg/IR/Linalg.h>
+#include <mlir/Dialect/Linalg/Utils/Utils.h>
 #include <mlir/Dialect/MemRef/IR/MemRef.h>
 #include <mlir/IR/BuiltinOps.h>
 
@@ -287,9 +288,9 @@ struct LocalOfSliceOpConverter
     // last index of slice
     auto slcEnd = slcOffs0 + slcSizes0 * slcStrides0;
     // local extent/size
-    auto lExtent = easyIdx(
-        loc, rewriter,
-        rewriter.create<::mlir::memref::DimOp>(loc, lMemRef, zeroIdx.get()));
+    auto lExtent =
+        easyIdx(loc, rewriter,
+                ::mlir::linalg::createOrFoldDimOp(rewriter, loc, lMemRef, 0));
     // local offset (dim 0)
     auto lOff = easyIdx(loc, rewriter, lOffs[0]);
     // last index of local partition

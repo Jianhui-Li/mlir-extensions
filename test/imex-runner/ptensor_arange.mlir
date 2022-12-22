@@ -49,8 +49,9 @@ module {
 
 
         %40 = ptensor.create %i2, %i2, %i2 value %c5 {dtype = 2 : i8} : (index, index, index, i64) -> !ptensor.ptensor<3 x i64>
-        %41 = "ptensor.ewbin"(%40, %40) {op = 0 : i32} : (!ptensor.ptensor<3 x i64>, !ptensor.ptensor<3 x i64>) -> !ptensor.ptensor<3 x i64>
-        %44 = builtin.unrealized_conversion_cast %41 : !ptensor.ptensor<3 x i64> to memref<?x?x?xi64>
+        %41 = ptensor.create %i2 value %c5 {dtype = 2 : i8} : (index, i64) -> !ptensor.ptensor<1 x i64>
+        %42 = "ptensor.ewbin"(%40, %41) {op = 0 : i32} : (!ptensor.ptensor<3 x i64>, !ptensor.ptensor<1 x i64>) -> !ptensor.ptensor<3 x i64>
+        %44 = builtin.unrealized_conversion_cast %42 : !ptensor.ptensor<3 x i64> to memref<?x?x?xi64>
         %45 = bufferization.to_tensor %44 : memref<?x?x?xi64>
         %46 = tensor.cast %45 : tensor<?x?x?xi64> to tensor<*xi64>
         call @printMemrefI64(%46) : (tensor<*xi64>) -> ()
@@ -61,7 +62,7 @@ module {
         // CHECK-NEXT{LITERAL}:  [[10,    10],
         // CHECK-NEXT{LITERAL}:   [10,    10]]]
 
-        %50 = "ptensor.reduction"(%41) {op = 4 : i32} : (!ptensor.ptensor<3 x i64>) -> !ptensor.ptensor<0 x i64>
+        %50 = "ptensor.reduction"(%42) {op = 4 : i32} : (!ptensor.ptensor<3 x i64>) -> !ptensor.ptensor<0 x i64>
         %54 = builtin.unrealized_conversion_cast %50 : !ptensor.ptensor<0 x i64> to memref<i64>
         %55 = bufferization.to_tensor %54 : memref<i64>
         %56 = tensor.cast %55 : tensor<i64> to tensor<*xi64>
