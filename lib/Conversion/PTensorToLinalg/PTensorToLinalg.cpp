@@ -471,8 +471,8 @@ struct EWBinOpLowering
     auto rank = static_cast<unsigned>(std::max(lhsRank, rhsRank));
     auto lhsShape = rewriter.create<::mlir::shape::ShapeOfOp>(loc, lhsTnsr);
     auto rhsShape = rewriter.create<::mlir::shape::ShapeOfOp>(loc, rhsTnsr);
-    auto resShapeType = ::mlir::RankedTensorType::get(
-        ::std::array<int64_t, 1>{::mlir::ShapedType::kDynamic}, idxType);
+    auto resShapeType =
+        ::mlir::RankedTensorType::get(::std::array<int64_t, 1>{rank}, idxType);
     auto resShape = rewriter.create<::mlir::shape::BroadcastOp>(
         loc, resShapeType, lhsShape, rhsShape, ::mlir::StringAttr{});
 
