@@ -223,10 +223,28 @@ def LocalOfSliceOp : Dist_Op<"local_of_slice",
     ];
 }
 
+def ReBalance : Dist_Op<"rebalance", [Pure]> {
+    let summary = "Repartition a tensor to be fully balanced.";
+    let description = [{
+        Repartition a tensor to be fully balanced.
+        The resulting partitioning matches dense and unsliced tensors of the same size.
+    }];
+
+    let arguments = (ins AnyType:$d_tensor);
+    let results = (outs Dist_Tensor);
+
+    let builders = [
+        // auto-deduce return type: same as input
+        OpBuilder<(ins "::mlir::Value":$d_tensor), [{
+            build($_builder, $_state, d_tensor.getType(), d_tensor);
+        }]>,
+    ];
+}
+
 def LocalToGlobalOp : Dist_Op<"local_to_global", [Pure]> {
     let summary = "Translate local indices into global indices";
     let description = [{
-        Input indices are interprete as relative to the local part of the given DTensor.
+        Input indices are interpreted as relative to the local part of the given DTensor.
     }];
 
     let arguments = (ins AnyType:$d_tensor, Variadic<Index>:$l_indices);

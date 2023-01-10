@@ -74,3 +74,13 @@ func.func @test_local_of_slice(%arg0: !dist.dtensor<<1 x i64>>) -> (index, index
 // CHECK-LABEL: @test_local_of_slice
 // CHECK: [[C1:%.*]], [[C2:%.*]], [[C3:%.*]] = dist.local_of_slice
 // CHECK: return [[C1]], [[C2]], [[C3]]
+
+
+// -----
+func.func @test_rebalance(%arg0: !dist.dtensor<<1 x i64>>) -> (!dist.dtensor<<1 x i64>>) {
+    %0 = "dist.rebalance"(%arg0) : (!dist.dtensor<<1 x i64>>) -> !dist.dtensor<<1 x i64>>
+    return %0 : !dist.dtensor<<1 x i64>>
+}
+// CHECK-LABEL: @test_rebalance
+// CHECK: [[C1:%.*]] = "dist.rebalance"
+// CHECK: return [[C1]]
