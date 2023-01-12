@@ -15,7 +15,7 @@ func.func @test_extract_slice(%arg0: !ptensor.ptensor<1 x i64>) -> !ptensor.pten
 
 // -----
 func.func @test_arange(%arg0: i64, %arg1: i64, %arg2: i64) -> !ptensor.ptensor<1 x index> {
-    %0 = "ptensor.arange"(%arg0, %arg1, %arg2) : (i64, i64, i64) -> !ptensor.ptensor<1 x index>
+    %0 = ptensor.arange %arg0 %arg1 %arg2 : (i64, i64, i64) -> !ptensor.ptensor<1 x index>
     return %0 : !ptensor.ptensor<1 x index>
 }
 // CHECK-LABEL: @test_arange

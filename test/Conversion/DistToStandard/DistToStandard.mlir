@@ -11,6 +11,7 @@ module {
 // CHECK-LABEL: func.func private @_idtr_nprocs(index) -> index
 // CHECK-LABEL: func.func private @_idtr_prank(index) -> index
 // CHECK-LABEL: func.func private @_idtr_reduce_all(index, index, index, index, i32, i32)
+// CHECK-LABEL: func.func private @_idtr_rebalance(index, index, index, index, index, index, i32, index)
 // CHECK-LABEL: func.func @test_nprocs(%arg0: index) -> index {
 // CHECK: @_idtr_nprocs(%arg0)
 
@@ -25,6 +26,7 @@ module {
 // CHECK-LABEL: func.func private @_idtr_nprocs(index) -> index
 // CHECK-LABEL: func.func private @_idtr_prank(index) -> index
 // CHECK-LABEL: func.func private @_idtr_reduce_all(index, index, index, index, i32, i32)
+// CHECK-LABEL: func.func private @_idtr_rebalance(index, index, index, index, index, index, i32, index)
 // CHECK-LABEL: func.func @test_prank(%arg0: index) -> index {
 // CHECK: call @_idtr_prank(%arg0)
 
@@ -99,3 +101,42 @@ func.func @test_0d_inout(%arg0: !dist.dtensor<<0 x i64>>, %arg1: !dist.dtensor<<
 // CHECK-LABEL: func.func @test_0d_inout(%arg0: !ptensor.ptensor<0 x i64>, %arg1: index, %arg2: !ptensor.ptensor<0 x i64>, %arg3: index) -> (!ptensor.ptensor<0 x i64>, index) {
 // CHECK: [[V1:%.*]] = "ptensor.ewbin"
 // CHECK: return [[V1]], %arg1 : !ptensor.ptensor<0 x i64>, index
+
+// -----
+module {
+    "dist.runtime_prototypes"() : () -> ()
+    func.func @test_rebalance(%arg0: !dist.dtensor<<2 x i64>>) -> !dist.dtensor<<2 x i64>> {
+    %0 = "dist.rebalance"(%arg0) : (!dist.dtensor<<2 x i64>>) -> !dist.dtensor<<2 x i64>>
+    return %0 : !dist.dtensor<<2 x i64>>
+    }
+}
+// CHECK-LABEL: func.func @test_rebalance(%arg0: !ptensor.ptensor<2 x i64>, %arg1: index, %arg2: memref<2xindex>, %arg3: memref<2xindex>) -> (!ptensor.ptensor<2 x i64>, index, memref<2xindex>, memref<2xindex>) {
+// CHECK: [[V1:%.*]] = "ptensor.extract_tensor"(%arg0)
+// CHECK: memref.extract_aligned_pointer_as_index [[V1]]
+// CHECK: memref.extract_strided_metadata  [[V1]]
+// CHECK: memref.load %arg2[
+// CHECK: memref.load %arg2[
+// CHECK: memref.load %arg3[
+// CHECK: memref.load %arg3[
+// CHECK: memref.alloc() {alignment = 8 : i64} : memref<2xindex>
+// CHECK: memref.store
+// CHECK: memref.store
+// CHECK: memref.extract_aligned_pointer_as_index
+// CHECK: memref.alloc() {alignment = 8 : i64} : memref<2xindex>
+// CHECK: memref.store
+// CHECK: memref.store
+// CHECK: memref.extract_aligned_pointer_as_index
+// CHECK: memref.alloc() {alignment = 8 : i64} : memref<2xindex>
+// CHECK: memref.store
+// CHECK: memref.store
+// CHECK: memref.extract_aligned_pointer_as_index
+// CHECK: memref.alloc() {alignment = 8 : i64} : memref<2xindex>
+// CHECK: memref.store
+// CHECK: memref.store
+// CHECK: memref.extract_aligned_pointer_as_index
+// CHECK: call @_idtr_nprocs(%arg1) : (index) -> index
+// CHECK: call @_idtr_prank(%arg1) : (index) -> index
+// CHECK: ptensor.create
+// CHECK: "ptensor.extract_tensor"(
+// CHECK: memref.extract_aligned_pointer_as_index
+// CHECK: call @_idtr_rebalance

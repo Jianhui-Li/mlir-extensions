@@ -15,6 +15,11 @@
 #define _IMEX_PASSUTILS_H_
 
 #include <mlir/Dialect/Arith/IR/Arith.h>
+#include <mlir/Dialect/MemRef/IR/MemRef.h>
+#include <mlir/Dialect/Tensor/IR/Tensor.h>
+#include <mlir/IR/Builders.h>
+#include <mlir/IR/BuiltinOps.h>
+#include <mlir/IR/BuiltinTypeInterfaces.h>
 
 namespace imex {
 
@@ -67,6 +72,78 @@ inline ::mlir::Value createIndexCast(const ::mlir::Location &loc,
              ? val
              : builder.create<::mlir::arith::IndexCastOp>(loc, intTyp, val)
                    .getResult();
+}
+
+/// get dyn-sized mlir::RankedTensorType for given rank and elType
+inline auto getTensorType(::mlir::MLIRContext *ctxt, int64_t rank,
+                          ::mlir::Type elType) {
+  return ::mlir::RankedTensorType::get(
+      std::vector<int64_t>(rank, ::mlir::ShapedType::kDynamic),
+      elType); //, layout);
+}
+
+/// create an empty RankedTensor with tiven shape and elType
+inline auto createEmptyTensor(::mlir::OpBuilder &builder, ::mlir::Location loc,
+                              ::mlir::Type elType, ::mlir::ValueRange shp) {
+  return builder.createOrFold<::mlir::tensor::EmptyOp>(
+      loc, getTensorType(builder.getContext(), shp.size(), elType), shp);
+}
+
+/// get dyn-sized mlir::RankedTensorType for given rank and elType
+/// if strided==true make it a strided layout
+inline auto getMemRefType(::mlir::MLIRContext *ctxt, int64_t rank,
+                          ::mlir::Type elType, bool strided = true) {
+  static auto kDynamic = ::mlir::ShapedType::kDynamic;
+  auto layout = ::mlir::StridedLayoutAttr::get(
+      ctxt, kDynamic, ::mlir::SmallVector<int64_t>(rank, kDynamic));
+  return ::mlir::MemRefType::get(std::vector<int64_t>(rank, kDynamic), elType,
+                                 strided ? layout
+                                         : ::mlir::StridedLayoutAttr{});
+}
+
+/// Create a 1d MemRef alloc with given size and elType
+inline auto createAllocMR(::mlir::OpBuilder &builder, ::mlir::Location loc,
+                          ::mlir::Type elType, int64_t sz) {
+  return builder.create<::mlir::memref::AllocOp>(
+      loc, ::mlir::MemRefType::get({sz}, elType), builder.getI64IntegerAttr(8));
+}
+
+/// Create a 1d MemRef from given elements and elType
+inline ::mlir::Value createMemRefFromElements(::mlir::OpBuilder &builder,
+                                              ::mlir::Location loc,
+                                              ::mlir::Type elType,
+                                              ::mlir::ValueRange elts) {
+  int64_t N = elts.size();
+  auto mr = createAllocMR(builder, loc, elType, N);
+  for (auto i = 0; i < N; ++i) {
+    auto idx = createIndex(loc, builder, i);
+    (void)builder.create<::mlir::memref::StoreOp>(loc, elts[i], mr, idx);
+  }
+  return mr;
+}
+
+/// @return members of given 1d memref as individual values
+inline auto createValuesFromMemRef(::mlir::OpBuilder &builder,
+                                   ::mlir::Location loc, ::mlir::Value mr) {
+  auto mrTyp = mr.getType().dyn_cast<::mlir::MemRefType>();
+  assert(mrTyp && mrTyp.getShape().size() == 1);
+  auto rank = mrTyp.getShape()[0];
+  ::mlir::SmallVector<::mlir::Value> vals(rank);
+  for (auto i = 0; i < rank; ++i) {
+    auto _i = createIndex(loc, builder, i);
+    vals[i] = builder.create<::mlir::memref::LoadOp>(loc, mr, _i).getResult();
+  }
+  return vals;
+}
+
+inline auto createExtractPtrFromMemRefFromValues(::mlir::OpBuilder &builder,
+                                                 ::mlir::Location loc,
+                                                 ::mlir::ValueRange elts) {
+  return builder
+      .create<::mlir::memref::ExtractAlignedPointerAsIndexOp>(
+          loc,
+          createMemRefFromElements(builder, loc, builder.getIndexType(), elts))
+      .getResult();
 }
 
 } // namespace imex

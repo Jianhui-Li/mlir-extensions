@@ -223,7 +223,7 @@ def LocalOfSliceOp : Dist_Op<"local_of_slice",
     ];
 }
 
-def ReBalance : Dist_Op<"rebalance", [Pure]> {
+def ReBalanceOp : Dist_Op<"rebalance", [Pure]> {
     let summary = "Repartition a tensor to be fully balanced.";
     let description = [{
         Repartition a tensor to be fully balanced.

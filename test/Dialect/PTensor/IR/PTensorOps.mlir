@@ -31,11 +31,11 @@ func.func @test_insert_slice(%arg0: !ptensor.ptensor<1 x i64>, %arg1: !ptensor.p
 
 // -----
 func.func @test_arange(%arg0: si64, %arg1: si64, %arg2: si64) -> !ptensor.ptensor<1 x i64> {
-    %0 = "ptensor.arange"(%arg0, %arg1, %arg2) : (si64, si64, si64) -> !ptensor.ptensor<1 x i64>
+    %0 = ptensor.arange %arg0 %arg1 %arg2 : (si64, si64, si64) -> !ptensor.ptensor<1 x i64>
     return %0 : !ptensor.ptensor<1 x i64>
 }
 // CHECK-LABEL: @test_arange
-// CHECK-NEXT: "ptensor.arange"(%arg0, %arg1, %arg2) : (si64, si64, si64) -> !ptensor.ptensor<1 x i64>
+// CHECK-NEXT: ptensor.arange %arg0 %arg1 %arg2 : (si64, si64, si64) -> !ptensor.ptensor<1 x i64>
 
 func.func @test_create(%arg0: index, %arg1: index, %arg2: index, %arg3: i64) -> !ptensor.ptensor<3 x f64> {
     %0 = ptensor.create %arg0, %arg1, %arg2 {dtype = 0 : i8} : (index, index, index) -> !ptensor.ptensor<3 x f64>

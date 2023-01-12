@@ -11,7 +11,7 @@ module {
         %i1 = arith.constant 1 : index
         %i2 = arith.constant 2 : index
 
-        %3 = "ptensor.arange"(%c0, %c10, %c2, %c0, %c0) : (i64, i64, i64, i64, i64) -> !ptensor.ptensor<1 x i64>
+        %3 = ptensor.arange %c0 %c10 %c2 : (i64, i64, i64) -> !ptensor.ptensor<1 x i64>
         %4 = builtin.unrealized_conversion_cast %3 : !ptensor.ptensor<1 x i64> to memref<?xi64>
         %5 = bufferization.to_tensor %4 : memref<?xi64>
         %6 = tensor.cast %5 : tensor<?xi64> to tensor<*xi64>
@@ -20,7 +20,7 @@ module {
         // CHECK-SAME: rank = 1 offset = 0 sizes = [5] strides = [1] data =
         // CHECK-NEXT: [0,  2,  4,  6,  8]
 
-        // %13 = "ptensor.arange"(%c0, %c10, %c2, %c0, %c10) : (i64, i64, i64, i64, i64) -> !ptensor.ptensor<1 x i64>
+        // %13 = ptensor.arange %c0 %c10 %c2 : (i64, i64, i64, i64, i64) -> !ptensor.ptensor<1 x i64>
         // %14 = "ptensor.extract_tensor"(%13) : (!ptensor.ptensor<1 x i64>) -> tensor<?xi64>
         // %15 = tensor.cast %14 : tensor<?xi64> to tensor<*xi64>
         // call @printMemrefI64(%15) : (tensor<*xi64>) -> ()
@@ -38,7 +38,7 @@ module {
         // CHECK-NEXT: [2, 6]
 
 
-        %30 = "ptensor.arange"(%c0, %c2, %c1, %c0, %c0) : (i64, i64, i64, i64, i64) -> !ptensor.ptensor<1 x i64>
+        %30 = ptensor.arange %c0 %c2 %c1 : (i64, i64, i64) -> !ptensor.ptensor<1 x i64>
         ptensor.insert_slice %30 into %3[%i1] [%i2] [%i2] : !ptensor.ptensor<1 x i64> into !ptensor.ptensor<1 x i64>
         // %31 = "ptensor.extract_tensor"(%30) : (!ptensor.ptensor<1 x i64>) -> tensor<?xi64>
         // %32 = tensor.cast %31 : tensor<?xi64> to tensor<*xi64>

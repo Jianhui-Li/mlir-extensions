@@ -46,7 +46,6 @@
 // #include <mlir/Dialect/memref/IR/MemRef.h>
 #include <mlir/Dialect/Bufferization/IR/Bufferization.h>
 #include <mlir/Dialect/Tensor/IR/Tensor.h>
-#include <mlir/IR/BuiltinOps.h>
 #include <mlir/Pass/Pass.h>
 
 #include <iostream>
@@ -156,9 +155,9 @@ struct ExtractTensorLowering
       }
       assert(inpOp);
       // assert(inpOp.getOperands().size() == 4);
-      assert(inpOp.getOperands().front().getType().isa<::mlir::MemRefType>());
       // std::cerr << "repl: "; inpOp.dump(); std::cerr << " ";
       // inpOp.getOperands()[0].dump(); std::cerr << std::endl;
+      assert(inpOp.getOperands().front().getType().isa<::mlir::MemRefType>());
       rewriter.replaceOp(op, inpOp.getOperands()[0]);
     }
     return ::mlir::success();
@@ -315,16 +314,20 @@ struct CreateLowering
 
     // init tensor
     auto elTyp = ::imex::ptensor::toMLIR(rewriter, op.getDType());
-    auto tensor = createEmptyTensor(rewriter, loc, elTyp, adaptor.getShape());
+    auto res = createEmptyTensor(rewriter, loc, elTyp, adaptor.getShape());
 
-    auto res = createParFor(
-        loc, rewriter, retPtTyp.getRank(), tensor, ::mlir::ValueRange(),
-        [&value](::mlir::OpBuilder &builder, ::mlir::Location loc,
-                 ::mlir::ValueRange args) {
-          (void)builder.create<::mlir::linalg::YieldOp>(loc, value);
-        });
+    if (value) {
+      res = createParFor(
+                loc, rewriter, retPtTyp.getRank(), res, ::mlir::ValueRange(),
+                [&value](::mlir::OpBuilder &builder, ::mlir::Location loc,
+                         ::mlir::ValueRange args) {
+                  (void)builder.create<::mlir::linalg::YieldOp>(loc, value);
+                })
+                .getResult(0);
+    }
+
     rewriter.replaceOpWithNewOp<::mlir::bufferization::ToMemrefOp>(
-        op, retPtTyp.getMemRefType(), res.getResult(0));
+        op, retPtTyp.getMemRefType(), res);
 
     return ::mlir::success();
   }

@@ -8,7 +8,7 @@ module {
         %c3 = arith.constant 3 : index
         %v = arith.constant 55 : i64
         %s = arith.index_cast %arg0 : i64 to index
-        %0 = "ptensor.arange"(%arg0, %arg1, %arg2, %c0, %c1) : (i64, i64, i64, index, index) -> !ptensor.ptensor<1 x i64>
+        %0 = ptensor.arange %arg0 %arg1 %arg2 team %c1 : (i64, i64, i64, index) -> !ptensor.ptensor<1 x i64>
         %1 = ptensor.create %s value %v team %c1 {dtype = 2 : i8} : (index, i64, index) -> !ptensor.ptensor<1 x i64>
         %10 = ptensor.extract_slice %0[%c0][%c3][%c3] : !ptensor.ptensor<1 x i64> to !ptensor.ptensor<1 x i64>
         %20 ="ptensor.ewbin"(%10, %1) {op = 0 : i32} : (!ptensor.ptensor<1 x i64>, !ptensor.ptensor<1 x i64>) -> !ptensor.ptensor<1 x i64>
@@ -33,7 +33,7 @@ module {
 // CHECK: arith.addi
 // CHECK: arith.muli
 // CHECK: arith.addi
-// CHECK: "ptensor.arange"
+// CHECK: ptensor.arange
 // CHECK: "dist.init_dist_tensor"
 // CHECK: "dist.nprocs"
 // CHECK: "dist.prank"
@@ -44,7 +44,9 @@ module {
 // CHECK: "dist.local_tensor_of"
 // CHECK: ptensor.extract_slice
 // CHECK: "dist.team_of"
+// CHECK: "dist.rebalance"
 // CHECK: "dist.local_tensor_of"
+// CHECK: "dist.rebalance"
 // CHECK: "dist.local_tensor_of"
 // CHECK: "ptensor.ewbin"
 // CHECK: "dist.team_of"

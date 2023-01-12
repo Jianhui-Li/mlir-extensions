@@ -26,60 +26,6 @@ namespace ptensor {
 
 enum DType : int8_t { F64, F32, I64, U64, I32, U32, I16, U16, I8, U8, I1 };
 
-inline ::mlir::Type toMLIR(::mlir::OpBuilder &b, DType dt) {
-  switch (dt) {
-  case F64:
-    return b.getF64Type();
-  case F32:
-    return b.getF32Type();
-  case I64:
-    return b.getI64Type();
-  case U64:
-    return b.getI64Type();
-  case I32:
-    return b.getI32Type();
-  case U32:
-    return b.getI32Type();
-  case I16:
-    return b.getI16Type();
-  case U16:
-    return b.getI16Type();
-  case I8:
-    return b.getI8Type();
-  case U8:
-    return b.getI8Type();
-  case I1:
-    return b.getI1Type();
-  default:
-    assert(!"Cannot handle unknown DType");
-  };
-  return {};
-}
-
-inline DType fromMLIR(const ::mlir::Type &typ) {
-  if (typ.isF64())
-    return F64;
-  else if (typ.isF32())
-    return F32;
-  else if (typ.isIntOrIndex()) {
-    auto w = typ.getIntOrFloatBitWidth();
-    auto u = !typ.isIndex() && typ.isUnsignedInteger();
-    switch (w) {
-    case 64:
-      return u ? U64 : I64;
-    case 32:
-      return u ? U32 : I32;
-    case 16:
-      return u ? U16 : I16;
-    case 8:
-      return u ? U8 : I8;
-    case 1:
-      return I1;
-    };
-  }
-  assert(!"Type not supprted by PTensor");
-}
-
 /// The set of supported elementwise binary operations
 enum EWBinOpId : int {
   ADD,
@@ -119,17 +65,9 @@ enum EWBinOpId : int {
 enum ReduceOpId : int { MAX, MEAN, MIN, PROD, SUM, STD, VAR, REDUCEOPID_LAST };
 
 } // namespace ptensor
-
-template <int W, typename T>
-::mlir::Value createSignlessInt(::mlir::OpBuilder &b,
-                                const ::mlir::Location &loc, T val) {
-  return b
-      .create<::mlir::arith::ConstantOp>(
-          loc, b.getIntegerAttr(b.getIntegerType(W), val))
-      .getResult();
-}
-
 } // namespace imex
+
+#include <imex/Dialect/PTensor/Utils/Utils.h>
 
 #include <imex/Dialect/PTensor/IR/PTensorOpsDialect.h.inc>
 #define GET_TYPEDEF_CLASSES

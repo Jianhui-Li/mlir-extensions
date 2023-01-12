@@ -176,7 +176,7 @@ def InsertSliceOp : PTensor_Op<"insert_slice", [SameVariadicOperandSize]> {
   }];
 }
 
-def ARangeOp : PTensor_Op<"arange", [SameVariadicOperandSize]> {
+def ARangeOp : PTensor_Op<"arange", [AttrSizedOperandSegments]> {
     let summary = "Create an arange (see array-API)";
     let description = [{
         Returns evenly `step`-spaced values within the half-open interval [`start`, `stop`) as a ptensor of rank 1.
@@ -188,6 +188,19 @@ def ARangeOp : PTensor_Op<"arange", [SameVariadicOperandSize]> {
                          Optional<AnyType>:$device, Optional<AnyType>:$team);
     // result is a ptensor
     let results = (outs PTensor_PTensor);
+
+    let assemblyFormat = [{
+      $start $stop $step oilist(`device` $device | `team` $team) attr-dict `:` `(` type(operands) `)` `->` qualified(type(results))
+    }];
+
+    let builders = [
+        // auto-deduce return type
+        OpBuilder<(ins "::mlir::Value":$start, "::mlir::Value":$stop, "::mlir::Value":$step, "::mlir::Value":$device, "::mlir::Value":$team), [{
+            build($_builder, $_state, ::imex::ptensor::PTensorType::get(
+                $_state.getContext(), 1, $_builder.getI64Type(), device ? true : false),
+                start, stop, step, device, team);
+        }]>,
+    ];
 }
 
 def CreateOp : PTensor_Op<"create", [AttrSizedOperandSegments]> {

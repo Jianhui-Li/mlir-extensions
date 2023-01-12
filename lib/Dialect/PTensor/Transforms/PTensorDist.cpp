@@ -221,12 +221,9 @@ struct DistARangeOpRWP : public RecOpRewritePattern<::imex::ptensor::ARangeOp> {
     auto step = easyIdx(loc, rewriter, op.getStep());
     // compute global count (so we know the shape)
     auto count = createCountARange(rewriter, loc, start, stop, step);
-    auto dtype = rewriter.getI64Type(); // FIXME
     // get number of procs and prank
     auto nProcs = rewriter.create<::imex::dist::NProcsOp>(loc, team);
     auto pRank = rewriter.create<::imex::dist::PRankOp>(loc, team);
-    // result shape is 1d
-    constexpr int64_t rank = 1;
 
     // get local shape and offsets
     auto lPart = rewriter.create<::imex::dist::LocalPartitionOp>(
@@ -240,13 +237,9 @@ struct DistARangeOpRWP : public RecOpRewritePattern<::imex::ptensor::ARangeOp> {
     start = start + (off * step);
     // create stop
     stop = start + (step * lSz); // start + (lShape[0] * step)
-    //  get type of local tensor
-    auto artype = ::imex::ptensor::PTensorType::get(rewriter.getContext(), rank,
-                                                    dtype, false);
     // finally create local arange
     auto arres = rewriter.create<::imex::ptensor::ARangeOp>(
-        loc, artype, start.get(), stop.get(), step.get(), op.getDevice(),
-        nullptr);
+        loc, start.get(), stop.get(), step.get(), op.getDevice(), nullptr);
 
     rewriter.replaceOp(
         op, createDistTensor(loc, rewriter, {count}, arres, lOffs, team));
@@ -313,8 +306,10 @@ struct DistEWBinOpRWP : public RecOpRewritePattern<::imex::ptensor::EWBinOp> {
     }
 
     // local ewb operands
-    auto lLhs = createLocalTensorOf(loc, rewriter, op.getLhs());
-    auto lRhs = createLocalTensorOf(loc, rewriter, op.getRhs());
+    auto rbLhs = createReBalance(loc, rewriter, op.getLhs());
+    auto lLhs = createLocalTensorOf(loc, rewriter, rbLhs);
+    auto rbRhs = createReBalance(loc, rewriter, op.getRhs());
+    auto lRhs = createLocalTensorOf(loc, rewriter, rbRhs);
     // return type same as lhs for now
     auto retPtTyp = lLhs.getType(); // FIXME
     auto ewbres = rewriter.create<::imex::ptensor::EWBinOp>(
