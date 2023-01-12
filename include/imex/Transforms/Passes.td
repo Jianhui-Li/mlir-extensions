@@ -91,4 +91,18 @@ def LowerMemRefCopy : Pass<"imex-lower-memref-copy", "::mlir::func::FuncOp"> {
     ];
 }
 
+def LoadBinarySPIRVPass : Pass<"load-binary-spirv", "::mlir::ModuleOp"> {
+  let summary = "serialize MLIR SPIR-V module to SPIR-V binary";
+  let description = [{
+    This pass loads a SPIR-V binary file, attaches the binary blob as a string
+    attribute to the corresponding gpu module and deletes any pre-existing
+    SPIR-V module associated with it.
+  }];
+  let constructor = "imex::createLoadBinarySPIRVPass()";
+  let dependentDialects = [
+    "mlir::gpu::GPUDialect",
+    "mlir::spirv::SPIRVDialect"
+    ];
+}
+
 #endif // _IMEX_TRANSFORMS_PASSES_TD_INCLUDED_
