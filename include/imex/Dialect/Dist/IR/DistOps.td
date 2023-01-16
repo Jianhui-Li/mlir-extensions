@@ -110,8 +110,10 @@ def InitDistTensorOp : Dist_Op<"init_dist_tensor", [SameVariadicOperandSize, Pur
     let builders = [
         // auto-deduce return type
         OpBuilder<(ins "::mlir::Value":$p_tensor, "::mlir::Value":$team, "::mlir::ValueRange":$g_shape, "::mlir::ValueRange":$l_offsets), [{
+            auto pTT = p_tensor.getType().dyn_cast<::imex::ptensor::PTensorType>();
+            assert(pTT && g_shape.size() == (size_t)pTT.getRank() && l_offsets.size() == (size_t)pTT.getRank());
             build($_builder, $_state,
-                  ::imex::dist::DistTensorType::get($_builder.getContext(), p_tensor.getType().dyn_cast<::imex::ptensor::PTensorType>()),
+                  ::imex::dist::DistTensorType::get($_builder.getContext(), pTT),
                   p_tensor, team, g_shape, l_offsets);
         }]>,
     ];
@@ -223,7 +225,7 @@ def LocalOfSliceOp : Dist_Op<"local_of_slice",
     ];
 }
 
-def ReBalanceOp : Dist_Op<"rebalance", [Pure]> {
+def ReBalanceOp : Dist_Op<"rebalance", []> {
     let summary = "Repartition a tensor to be fully balanced.";
     let description = [{
         Repartition a tensor to be fully balanced.

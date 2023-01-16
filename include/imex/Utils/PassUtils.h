@@ -136,15 +136,5 @@ inline auto createValuesFromMemRef(::mlir::OpBuilder &builder,
   return vals;
 }
 
-inline auto createExtractPtrFromMemRefFromValues(::mlir::OpBuilder &builder,
-                                                 ::mlir::Location loc,
-                                                 ::mlir::ValueRange elts) {
-  return builder
-      .create<::mlir::memref::ExtractAlignedPointerAsIndexOp>(
-          loc,
-          createMemRefFromElements(builder, loc, builder.getIndexType(), elts))
-      .getResult();
-}
-
 } // namespace imex
 #endif // _IMEX_PASSUTILS_H_

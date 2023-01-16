@@ -11,7 +11,7 @@ module {
 // CHECK-LABEL: func.func private @_idtr_nprocs(index) -> index
 // CHECK-LABEL: func.func private @_idtr_prank(index) -> index
 // CHECK-LABEL: func.func private @_idtr_reduce_all(index, index, index, index, i32, i32)
-// CHECK-LABEL: func.func private @_idtr_rebalance(index, index, index, index, index, index, i32, index)
+// CHECK-LABEL: func.func private @_idtr_rebalance(index, index, index, index, index, index, i32, index, index, index, index)
 // CHECK-LABEL: func.func @test_nprocs(%arg0: index) -> index {
 // CHECK: @_idtr_nprocs(%arg0)
 
@@ -26,7 +26,7 @@ module {
 // CHECK-LABEL: func.func private @_idtr_nprocs(index) -> index
 // CHECK-LABEL: func.func private @_idtr_prank(index) -> index
 // CHECK-LABEL: func.func private @_idtr_reduce_all(index, index, index, index, i32, i32)
-// CHECK-LABEL: func.func private @_idtr_rebalance(index, index, index, index, index, index, i32, index)
+// CHECK-LABEL: func.func private @_idtr_rebalance(index, index, index, index, index, index, i32, index, index, index, index)
 // CHECK-LABEL: func.func @test_prank(%arg0: index) -> index {
 // CHECK: call @_idtr_prank(%arg0)
 
@@ -86,7 +86,10 @@ module {
 // CHECK: [[V1:%.*]] = arith.select
 // CHECK: arith.select
 // CHECK: [[V2:%.*]] = arith.select
-// CHECK: [[V3:%.*]] = arith.addi
+// CHECK: arith.addi
+// CHECK: arith.divsi
+// CHECK: arith.select
+// CHECK: [[V3:%.*]] = arith.select
 // CHECK: return [[V1]], [[V2]], [[V3]] : index, index, index
 
 // -----
@@ -112,8 +115,8 @@ module {
 }
 // CHECK-LABEL: func.func @test_rebalance(%arg0: !ptensor.ptensor<2 x i64>, %arg1: index, %arg2: memref<2xindex>, %arg3: memref<2xindex>) -> (!ptensor.ptensor<2 x i64>, index, memref<2xindex>, memref<2xindex>) {
 // CHECK: [[V1:%.*]] = "ptensor.extract_tensor"(%arg0)
+// CHECK: memref.extract_strided_metadata [[V1]]
 // CHECK: memref.extract_aligned_pointer_as_index [[V1]]
-// CHECK: memref.extract_strided_metadata  [[V1]]
 // CHECK: memref.load %arg2[
 // CHECK: memref.load %arg2[
 // CHECK: memref.load %arg3[

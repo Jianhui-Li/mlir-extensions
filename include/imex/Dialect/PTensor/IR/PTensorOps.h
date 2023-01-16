@@ -21,52 +21,7 @@
 #include <mlir/IR/OpDefinition.h>
 #include <mlir/IR/Types.h>
 
-namespace imex {
-namespace ptensor {
-
-enum DType : int8_t { F64, F32, I64, U64, I32, U32, I16, U16, I8, U8, I1 };
-
-/// The set of supported elementwise binary operations
-enum EWBinOpId : int {
-  ADD,
-  AND,
-  ATAN2,
-  BITWISE_AND,
-  BITWISE_LEFT_SHIFT,
-  BITWISE_OR,
-  BITWISE_RIGHT_SHIFT,
-  BITWISE_XOR,
-  EQUAL,
-  FLOOR_DIVIDE,
-  GREATER,
-  GREATER_EQUAL,
-  LESS,
-  LESS_EQUAL,
-  LOGADDEXP,
-  LOGICAL_AND,
-  LOGICAL_OR,
-  LOGICAL_XOR,
-  LSHIFT,
-  MATMUL,
-  MAXIMUM,
-  MINIMUM,
-  MODULO,
-  MULTIPLY,
-  NOT_EQUAL,
-  OR,
-  POWER,
-  SUBTRACT,
-  TRUE_DIVIDE,
-  XOR,
-  EWBINOPID_LAST
-};
-
-/// The set of supported reduction operations
-enum ReduceOpId : int { MAX, MEAN, MIN, PROD, SUM, STD, VAR, REDUCEOPID_LAST };
-
-} // namespace ptensor
-} // namespace imex
-
+#include "PTensorDefs.h"
 #include <imex/Dialect/PTensor/Utils/Utils.h>
 
 #include <imex/Dialect/PTensor/IR/PTensorOpsDialect.h.inc>

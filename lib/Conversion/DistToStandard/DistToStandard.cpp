@@ -42,8 +42,27 @@ using ::imex::ptensor::createDType;
 
 namespace imex {
 namespace dist {
-
 namespace {
+
+template <typename T>
+inline auto createExtractPtrFromMemRef(::mlir::OpBuilder &builder,
+                                       ::mlir::Location loc, ::mlir::Value mr,
+                                       T meta) {
+  auto off = easyIdx(loc, builder, meta.getOffset());
+  auto aptr = easyIdx(
+      loc, builder,
+      builder.create<::mlir::memref::ExtractAlignedPointerAsIndexOp>(loc, mr));
+  return (aptr + (off * easyIdx(loc, builder, sizeof(uint64_t)))).get();
+}
+
+inline auto createExtractPtrFromMemRefFromValues(::mlir::OpBuilder &builder,
+                                                 ::mlir::Location loc,
+                                                 ::mlir::ValueRange elts) {
+  auto mr =
+      createMemRefFromElements(builder, loc, builder.getIndexType(), elts);
+  auto meta = builder.create<::mlir::memref::ExtractStridedMetadataOp>(loc, mr);
+  return createExtractPtrFromMemRef(builder, loc, mr, meta);
+}
 
 // create function prototype fo given function name, arg-types and
 // return-types
@@ -95,7 +114,8 @@ struct RuntimePrototypesOpConverter
         {indexType, indexType, indexType, indexType, dtypeType, opType}, {});
     requireFunc(loc, rewriter, module, "_idtr_rebalance",
                 {indexType, indexType, indexType, indexType, indexType,
-                 indexType, dtypeType, indexType},
+                 indexType, dtypeType, indexType, indexType, indexType,
+                 indexType},
                 {});
     rewriter.eraseOp(op);
     return ::mlir::success();
@@ -361,6 +381,7 @@ struct LocalOfSliceOpConverter
     auto viewOff1 = startsBefore.select(lDiff1, lDiff2);
     // except if slice/view before or behind local partition
     auto viewOff0 = beforeLocal.select(zeroIdx, viewOff1);
+    // viewOff is the offset from local partition to slice's local start
     auto viewOff = behindLocal.select(zeroIdx, viewOff0);
     // min of lEnd and slice's end
     auto theEnd = lEnd.min(slcEnd);
@@ -370,12 +391,16 @@ struct LocalOfSliceOpConverter
     auto viewSize1 = (lRange + (slcStrides0 - oneIdx)) / slcStrides0;
     auto viewSize0 = beforeLocal.select(zeroIdx, viewSize1);
     auto viewSize = behindLocal.select(zeroIdx, viewSize0);
+    // start index of local partition's part of slice
+    auto gSlcStart1 = (lOff + viewOff - slcOffs0) / slcStrides0;
+    auto gSlcStart0 = beforeLocal.select(zeroIdx, gSlcStart1);
+    auto gSlcStart = behindLocal.select(zeroIdx, gSlcStart0);
 
-    // and store in output
+    // and store in output [lOffsets, lSizes, gOffsets]
     ::mlir::SmallVector<::mlir::Value> results(3 * rank);
     results[0 * rank] = viewOff.get();
     results[1 * rank] = viewSize.get();
-    results[2 * rank] = (lOff + viewOff).get();
+    results[2 * rank] = gSlcStart.get();
     for (auto i = 1; i < rank; ++i) {
       results[0 * rank + i] = slcOffs[i];
       results[1 * rank + i] = slcSizes[i];
@@ -439,12 +464,9 @@ struct AllReduceOpConverter
     auto dtype = createDType(loc, rewriter, mRefType);
 
     auto fsa = rewriter.getStringAttr("_idtr_reduce_all");
-    auto aptr = rewriter.create<::mlir::memref::ExtractAlignedPointerAsIndexOp>(
-        loc, mRef);
     auto meta =
         rewriter.create<::mlir::memref::ExtractStridedMetadataOp>(loc, mRef);
-    auto dataPtr =
-        rewriter.create<::mlir::arith::AddIOp>(loc, aptr, meta.getOffset());
+    auto dataPtr = createExtractPtrFromMemRef(rewriter, loc, mRef, meta);
 
     auto sizePtr =
         createExtractPtrFromMemRefFromValues(rewriter, loc, meta.getSizes());
@@ -493,12 +515,9 @@ struct ReBalanceOpConverter
 
     auto fsa = rewriter.getStringAttr("_idtr_rebalance");
     // Now get all the input pointers (data, sizes, strides)
-    auto aptr = rewriter.create<::mlir::memref::ExtractAlignedPointerAsIndexOp>(
-        loc, lMemRef);
     auto meta =
         rewriter.create<::mlir::memref::ExtractStridedMetadataOp>(loc, lMemRef);
-    auto dataPtr =
-        rewriter.create<::mlir::arith::AddIOp>(loc, aptr, meta.getOffset());
+    auto dataPtr = createExtractPtrFromMemRef(rewriter, loc, lMemRef, meta);
 
     auto gShape = createGlobalShapeOf(loc, rewriter, dTnsr);
     auto lOffs = createLocalOffsetsOf(loc, rewriter, dTnsr);
@@ -516,21 +535,27 @@ struct ReBalanceOpConverter
     auto pRank = rewriter.create<::imex::dist::PRankOp>(loc, team);
     auto lPart = rewriter.create<::imex::dist::LocalPartitionOp>(loc, nProcs,
                                                                  pRank, gShape);
+    auto val = createInt(loc, rewriter, 4711);
     auto outTnsr = rewriter.create<::imex::ptensor::CreateOp>(
         loc, lPart.getLShape(),
-        ::imex::ptensor::fromMLIR(mRefType.getElementType()), nullptr, nullptr,
+        ::imex::ptensor::fromMLIR(mRefType.getElementType()), val, nullptr,
         nullptr); // FIXME device
+
     auto outMemRef = rewriter.create<::imex::ptensor::ExtractMemRefOp>(
         loc, mRefType, outTnsr);
-    auto outPtr = rewriter
-                      .create<::mlir::memref::ExtractAlignedPointerAsIndexOp>(
-                          loc, outMemRef)
-                      .getResult();
-
+    auto outMeta = rewriter.create<::mlir::memref::ExtractStridedMetadataOp>(
+        loc, outMemRef);
+    auto outPtr = createExtractPtrFromMemRef(rewriter, loc, outMemRef, outMeta);
+    auto outSizePtr =
+        createExtractPtrFromMemRefFromValues(rewriter, loc, outMeta.getSizes());
+    auto outStridePtr = createExtractPtrFromMemRefFromValues(
+        rewriter, loc, outMeta.getStrides());
+    auto outRank = createIndex(loc, rewriter, lPart.getLShape().size());
     rewriter.create<::mlir::func::CallOp>(
         loc, fsa, ::mlir::TypeRange(),
         ::mlir::ValueRange{rank, gShapePtr, lOffsPtr, dataPtr, sizePtr,
-                           stridePtr, dtype, outPtr});
+                           stridePtr, dtype, outRank, outPtr, outSizePtr,
+                           outStridePtr});
 
     rewriter.replaceOp(
         op, createDistTensor(loc, rewriter, gShape, outTnsr, lOffs, team));

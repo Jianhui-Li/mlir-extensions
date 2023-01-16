@@ -139,6 +139,7 @@ struct DistExtractSliceOpRWP
         loc, src, slcOffs, slcSizes, slcStrides);
     auto lSlcOffsets = lSlice.getLOffsets();
     auto lSlcSizes = lSlice.getLSizes();
+    auto gSlcOffsets = lSlice.getGOffsets();
     // auto gOffsets = lSlice.getGOffsets();
 
     // create local view
@@ -150,7 +151,7 @@ struct DistExtractSliceOpRWP
     // init our new dist tensor
     auto team = createTeamOf(loc, rewriter, src);
     rewriter.replaceOp(op, createDistTensor(loc, rewriter, slcSizes, lView,
-                                            lSlcOffsets, team));
+                                            gSlcOffsets, team));
     return ::mlir::success();
   }
 };
@@ -308,8 +309,10 @@ struct DistEWBinOpRWP : public RecOpRewritePattern<::imex::ptensor::EWBinOp> {
     // local ewb operands
     auto rbLhs = createReBalance(loc, rewriter, op.getLhs());
     auto lLhs = createLocalTensorOf(loc, rewriter, rbLhs);
+    // auto lLhs = createLocalTensorOf(loc, rewriter, op.getLhs());
     auto rbRhs = createReBalance(loc, rewriter, op.getRhs());
     auto lRhs = createLocalTensorOf(loc, rewriter, rbRhs);
+    // auto lRhs = createLocalTensorOf(loc, rewriter, op.getRhs());
     // return type same as lhs for now
     auto retPtTyp = lLhs.getType(); // FIXME
     auto ewbres = rewriter.create<::imex::ptensor::EWBinOp>(
@@ -363,18 +366,13 @@ struct DistReductionOpRWP
     auto retRTnsr = createAllReduce(loc, rewriter, op.getOp(), redPTnsr);
     // get global shape, offsets and team
     // result shape is 0d
-    auto gShape = createGlobalShapeOf(loc, rewriter, op.getInput());
     auto team = createTeamOf(loc, rewriter, op.getInput());
-    auto nProcs = rewriter.create<::imex::dist::NProcsOp>(loc, team);
-    auto pRank = rewriter.create<::imex::dist::PRankOp>(loc, team);
-    auto lPart = rewriter.create<::imex::dist::LocalPartitionOp>(loc, nProcs,
-                                                                 pRank, gShape);
     // and init our new dist tensor
     auto dmy = ::imex::createInt<1>(loc, rewriter, 0); // FIXME
     auto resPTnsr = rewriter.create<::imex::ptensor::MkPTensorOp>(
         loc, false, retRTnsr, dmy);
-    rewriter.replaceOp(op, createDistTensor(loc, rewriter, gShape, resPTnsr,
-                                            lPart.getLOffsets(), team));
+    rewriter.replaceOp(op,
+                       createDistTensor(loc, rewriter, {}, resPTnsr, {}, team));
     return ::mlir::success();
   }
 };
