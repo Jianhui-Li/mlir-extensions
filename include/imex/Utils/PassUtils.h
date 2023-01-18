@@ -20,6 +20,10 @@
 #include <mlir/IR/Builders.h>
 #include <mlir/IR/BuiltinOps.h>
 #include <mlir/IR/BuiltinTypeInterfaces.h>
+#include <mlir/IR/Dominance.h>
+#include <mlir/Pass/Pass.h>
+
+#include <iostream>
 
 namespace imex {
 
@@ -134,6 +138,51 @@ inline auto createValuesFromMemRef(::mlir::OpBuilder &builder,
     vals[i] = builder.create<::mlir::memref::LoadOp>(loc, mr, _i).getResult();
   }
   return vals;
+}
+
+// when possible, move up operations of a certain type so that they are
+// close together.
+template <typename OP, typename GETINPUT>
+void groupOps(::mlir::DominanceInfo &domA, ::mlir::Operation *root,
+              GETINPUT getInput) {
+  llvm::SmallVector<OP> ops;
+
+  // Find all operations of type OP within root
+  root->walk([&](::mlir::Operation *op) {
+    if (auto typedOp = ::mlir::dyn_cast<OP>(op)) {
+      ops.emplace_back(typedOp);
+      return;
+    }
+  });
+
+  llvm::SmallVector<OP> dominators;
+  llvm::SmallVector<OP> dominators2;
+  dominators2.emplace_back(ops.front());
+
+  // we treat the first found op as the dominating operation
+  // We try to move up all found ops to right after the dominator
+  // Ops which cannot be be moved will serve as new dominators and we
+  // recursively try to move remaining ops to them
+  do {
+    dominators.swap(
+        dominators2); // new dominators will get stored in dominators2
+    for (auto dominator : dominators) {
+      auto iPnt = dominator;
+      for (auto op : ops) {
+        if (domA.properlyDominates(dominator, op, false)) {
+          auto dTnsr = getInput(op);
+          auto defOp = dTnsr.getDefiningOp();
+          if (domA.properlyDominates(defOp, dominator)) {
+            op->moveAfter(iPnt);
+            iPnt = op;
+          } else {
+            dominators2.emplace_back(op);
+          }
+        }
+      }
+    }
+    dominators.clear();
+  } while (!dominators2.empty());
 }
 
 } // namespace imex

@@ -47,6 +47,8 @@
 
 #include "PassDetail.h"
 
+#include <iostream>
+
 namespace imex {
 namespace dist {
 
@@ -387,6 +389,11 @@ struct PTensorDistPass : public ::imex::PTensorDistBase<PTensorDistPass> {
   PTensorDistPass() = default;
 
   void runOnOperation() override {
+
+    groupOps<::imex::ptensor::ExtractSliceOp>(
+        this->getAnalysis<::mlir::DominanceInfo>(), this->getOperation(),
+        [](auto &op) { return op.getSource(); });
+
     ::mlir::FrozenRewritePatternSet patterns;
     insertPatterns<DistARangeOpRWP, DistCreateOpRWP, DistEWBinOpRWP,
                    DistReductionOpRWP, DistExtractMemRefOpRWP,
