@@ -30,10 +30,10 @@ namespace dist {
 // Create a DistTensor from a PTensor and meta data
 inline ::mlir::Value
 createDistTensor(::mlir::Location &loc, ::mlir::OpBuilder &builder,
-                 ::mlir::ValueRange gshape, ::mlir::Value pt,
+                 ::mlir::Value pt, bool balanced, ::mlir::ValueRange gshape,
                  ::mlir::ValueRange loffsets, ::mlir::Value team) {
-  return builder.create<::imex::dist::InitDistTensorOp>(loc, pt, team, gshape,
-                                                        loffsets);
+  return builder.create<::imex::dist::InitDistTensorOp>(loc, pt, balanced, team,
+                                                        gshape, loffsets);
 }
 
 // create operation returning global shape of DistTensor
@@ -68,7 +68,7 @@ inline ::mlir::Value createTeamOf(::mlir::Location &loc,
 inline ::mlir::Value createReBalance(::mlir::Location &loc,
                                      ::mlir::OpBuilder &builder,
                                      ::mlir::Value dt) {
-  return builder.create<::imex::dist::ReBalanceOp>(loc, dt);
+  return builder.create<::imex::dist::ReBalanceOp>(loc, dt).getResult(0);
 }
 
 } // namespace dist

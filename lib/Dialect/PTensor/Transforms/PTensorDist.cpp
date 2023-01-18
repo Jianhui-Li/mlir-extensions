@@ -152,8 +152,8 @@ struct DistExtractSliceOpRWP
 
     // init our new dist tensor
     auto team = createTeamOf(loc, rewriter, src);
-    rewriter.replaceOp(op, createDistTensor(loc, rewriter, slcSizes, lView,
-                                            gSlcOffsets, team));
+    rewriter.replaceOp(op, createDistTensor(loc, rewriter, lView, false,
+                                            slcSizes, gSlcOffsets, team));
     return ::mlir::success();
   }
 };
@@ -245,7 +245,7 @@ struct DistARangeOpRWP : public RecOpRewritePattern<::imex::ptensor::ARangeOp> {
         loc, start.get(), stop.get(), step.get(), op.getDevice(), nullptr);
 
     rewriter.replaceOp(
-        op, createDistTensor(loc, rewriter, {count}, arres, lOffs, team));
+        op, createDistTensor(loc, rewriter, arres, true, {count}, lOffs, team));
     return ::mlir::success();
   }
 };
@@ -280,7 +280,7 @@ struct DistCreateOpRWP : public RecOpRewritePattern<::imex::ptensor::CreateOp> {
         loc, lPart.getLShape(), op.getDType(), op.getValue(), op.getDevice(),
         nullptr);
 
-    rewriter.replaceOp(op, createDistTensor(loc, rewriter, gShape, arres,
+    rewriter.replaceOp(op, createDistTensor(loc, rewriter, arres, true, gShape,
                                             lPart.getLOffsets(), team));
     return ::mlir::success();
   }
@@ -309,10 +309,14 @@ struct DistEWBinOpRWP : public RecOpRewritePattern<::imex::ptensor::EWBinOp> {
     }
 
     // local ewb operands
-    auto rbLhs = createReBalance(loc, rewriter, op.getLhs());
+    auto rbLhs = lhsDtTyp.getBalanced()
+                     ? op.getLhs()
+                     : createReBalance(loc, rewriter, op.getLhs());
     auto lLhs = createLocalTensorOf(loc, rewriter, rbLhs);
     // auto lLhs = createLocalTensorOf(loc, rewriter, op.getLhs());
-    auto rbRhs = createReBalance(loc, rewriter, op.getRhs());
+    auto rbRhs = rhsDtTyp.getBalanced()
+                     ? op.getRhs()
+                     : createReBalance(loc, rewriter, op.getRhs());
     auto lRhs = createLocalTensorOf(loc, rewriter, rbRhs);
     // auto lRhs = createLocalTensorOf(loc, rewriter, op.getRhs());
     // return type same as lhs for now
@@ -327,7 +331,7 @@ struct DistEWBinOpRWP : public RecOpRewritePattern<::imex::ptensor::EWBinOp> {
     auto lPart = rewriter.create<::imex::dist::LocalPartitionOp>(loc, nProcs,
                                                                  pRank, gShape);
     // and init our new dist tensor
-    rewriter.replaceOp(op, createDistTensor(loc, rewriter, gShape, ewbres,
+    rewriter.replaceOp(op, createDistTensor(loc, rewriter, ewbres, true, gShape,
                                             lPart.getLOffsets(), team));
     return ::mlir::success();
   }
@@ -373,8 +377,8 @@ struct DistReductionOpRWP
     auto dmy = ::imex::createInt<1>(loc, rewriter, 0); // FIXME
     auto resPTnsr = rewriter.create<::imex::ptensor::MkPTensorOp>(
         loc, false, retRTnsr, dmy);
-    rewriter.replaceOp(op,
-                       createDistTensor(loc, rewriter, {}, resPTnsr, {}, team));
+    rewriter.replaceOp(
+        op, createDistTensor(loc, rewriter, resPTnsr, true, {}, {}, team));
     return ::mlir::success();
   }
 };

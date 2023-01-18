@@ -495,7 +495,7 @@ struct ReBalanceOpConverter
                   ::mlir::ConversionPatternRewriter &rewriter) const override {
     // get guid and rank and call runtime function
     auto loc = op.getLoc();
-    auto dTnsr = op.getDTensor();
+    auto dTnsr = op.getDTensor().front(); // FIXME
     auto inpPtTyp = dTnsr.getType().dyn_cast<::imex::dist::DistTensorType>();
     if (!inpPtTyp)
       return ::mlir::failure();
@@ -557,8 +557,8 @@ struct ReBalanceOpConverter
                            stridePtr, dtype, outRank, outPtr, outSizePtr,
                            outStridePtr});
 
-    rewriter.replaceOp(
-        op, createDistTensor(loc, rewriter, gShape, outTnsr, lOffs, team));
+    rewriter.replaceOp(op, createDistTensor(loc, rewriter, outTnsr, true,
+                                            gShape, lOffs, team));
     return ::mlir::success();
   }
 };

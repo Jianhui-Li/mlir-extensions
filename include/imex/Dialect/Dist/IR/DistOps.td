@@ -56,8 +56,8 @@ def Dist_Tensor : Dist_Type<"DistTensor", "dtensor">
     A distributed PTensor needs information like offset and shape of local partition.
     The DistTensor type is used to define operations to carry and extract such information.
   }];
-  let parameters = (ins "::imex::ptensor::PTensorType":$p_tensor_type);
-  let assemblyFormat = "`<` $p_tensor_type `>`";
+  let parameters = (ins "::imex::ptensor::PTensorType":$p_tensor_type, "bool":$balanced);
+  let assemblyFormat = "`<` $p_tensor_type `,` $balanced `>`";
 }
 
 // Base class for dialect operations. This operation inherits from the base
@@ -109,11 +109,11 @@ def InitDistTensorOp : Dist_Op<"init_dist_tensor", [SameVariadicOperandSize, Pur
     let results = (outs Dist_Tensor);
     let builders = [
         // auto-deduce return type
-        OpBuilder<(ins "::mlir::Value":$p_tensor, "::mlir::Value":$team, "::mlir::ValueRange":$g_shape, "::mlir::ValueRange":$l_offsets), [{
+        OpBuilder<(ins "::mlir::Value":$p_tensor, "bool":$balanced, "::mlir::Value":$team, "::mlir::ValueRange":$g_shape, "::mlir::ValueRange":$l_offsets), [{
             auto pTT = p_tensor.getType().dyn_cast<::imex::ptensor::PTensorType>();
             assert(pTT && g_shape.size() == (size_t)pTT.getRank() && l_offsets.size() == (size_t)pTT.getRank());
             build($_builder, $_state,
-                  ::imex::dist::DistTensorType::get($_builder.getContext(), pTT),
+                  ::imex::dist::DistTensorType::get($_builder.getContext(), pTT, balanced),
                   p_tensor, team, g_shape, l_offsets);
         }]>,
     ];
@@ -232,13 +232,17 @@ def ReBalanceOp : Dist_Op<"rebalance", []> {
         The resulting partitioning matches dense and unsliced tensors of the same size.
     }];
 
-    let arguments = (ins AnyType:$d_tensor);
-    let results = (outs Dist_Tensor);
+    let arguments = (ins Variadic<AnyType>:$d_tensor);
+    let results = (outs Variadic<Dist_Tensor>);
 
     let builders = [
         // auto-deduce return type: same as input
-        OpBuilder<(ins "::mlir::Value":$d_tensor), [{
-            build($_builder, $_state, d_tensor.getType(), d_tensor);
+        OpBuilder<(ins "::mlir::ValueRange":$d_tensor), [{
+            auto dTT = d_tensor.front().getType().dyn_cast<::imex::dist::DistTensorType>();
+            assert(dTT);
+            auto outT = ::imex::dist::DistTensorType::get($_builder.getContext(), dTT.getPTensorType(), true);
+            ::mlir::SmallVector<::mlir::Type> rt(d_tensor.size(), outT);
+            build($_builder, $_state, ::mlir::TypeRange(rt), d_tensor);
         }]>,
     ];
 }

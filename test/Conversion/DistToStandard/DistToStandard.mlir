@@ -33,9 +33,9 @@ module {
 // -----
 module {
     "dist.runtime_prototypes"() : () -> ()
-    func.func @test_init_dist_tensor(%pt: !ptensor.ptensor<1 x i64>, %team: index, %gshape: index, %loffs: index) -> !dist.dtensor<<1 x i64>> {
-        %1 = "dist.init_dist_tensor"(%pt, %team, %gshape, %loffs) : (!ptensor.ptensor<1 x i64>, index, index, index) -> !dist.dtensor<<1 x i64>>
-        return %1 : !dist.dtensor<<1 x i64>>
+    func.func @test_init_dist_tensor(%pt: !ptensor.ptensor<1 x i64>, %team: index, %gshape: index, %loffs: index) -> !dist.dtensor<<1 x i64>, true> {
+        %1 = "dist.init_dist_tensor"(%pt, %team, %gshape, %loffs) : (!ptensor.ptensor<1 x i64>, index, index, index) -> !dist.dtensor<<1 x i64>, true>
+        return %1 : !dist.dtensor<<1 x i64>, true>
     }
 }
 // CHECK-LABEL: func.func @test_init_dist_tensor
@@ -69,8 +69,8 @@ module {
 
 // -----
 module {
-    func.func @test_local_of_slice(%arg0: !dist.dtensor<<1 x i64>>, %c0 : index, %c3 : index) -> (index, index, index) {
-        %l_offsets, %l_sizes, %g_offsets = dist.local_of_slice %arg0[%c0] [%c3] [%c3] : !dist.dtensor<<1 x i64>> to (index, index, index)
+    func.func @test_local_of_slice(%arg0: !dist.dtensor<<1 x i64>, true>, %c0 : index, %c3 : index) -> (index, index, index) {
+        %l_offsets, %l_sizes, %g_offsets = dist.local_of_slice %arg0[%c0] [%c3] [%c3] : !dist.dtensor<<1 x i64>, true> to (index, index, index)
         return %l_offsets, %l_sizes, %g_offsets : index, index, index
     }
 }
@@ -93,13 +93,13 @@ module {
 // CHECK: return [[V1]], [[V2]], [[V3]] : index, index, index
 
 // -----
-func.func @test_0d_inout(%arg0: !dist.dtensor<<0 x i64>>, %arg1: !dist.dtensor<<0 x i64>>) -> !dist.dtensor<<0 x i64>> {
-  %0 = "dist.local_tensor_of"(%arg0) : (!dist.dtensor<<0 x i64>>) -> !ptensor.ptensor<0 x i64>
-  %1 = "dist.local_tensor_of"(%arg1) : (!dist.dtensor<<0 x i64>>) -> !ptensor.ptensor<0 x i64>
+func.func @test_0d_inout(%arg0: !dist.dtensor<<0 x i64>, true>, %arg1: !dist.dtensor<<0 x i64>, true>) -> !dist.dtensor<<0 x i64>, true> {
+  %0 = "dist.local_tensor_of"(%arg0) : (!dist.dtensor<<0 x i64>, true>) -> !ptensor.ptensor<0 x i64>
+  %1 = "dist.local_tensor_of"(%arg1) : (!dist.dtensor<<0 x i64>, true>) -> !ptensor.ptensor<0 x i64>
   %2 = "ptensor.ewbin"(%0, %1) {op = 23 : i32} : (!ptensor.ptensor<0 x i64>, !ptensor.ptensor<0 x i64>) -> !ptensor.ptensor<0 x i64>
-  %3 = "dist.team_of"(%arg0) : (!dist.dtensor<<0 x i64>>) -> index
-  %4 = "dist.init_dist_tensor"(%2, %3) : (!ptensor.ptensor<0 x i64>, index) -> !dist.dtensor<<0 x i64>>
-  return %4 : !dist.dtensor<<0 x i64>>
+  %3 = "dist.team_of"(%arg0) : (!dist.dtensor<<0 x i64>, true>) -> index
+  %4 = "dist.init_dist_tensor"(%2, %3) : (!ptensor.ptensor<0 x i64>, index) -> !dist.dtensor<<0 x i64>, true>
+  return %4 : !dist.dtensor<<0 x i64>, true>
 }
 // CHECK-LABEL: func.func @test_0d_inout(%arg0: !ptensor.ptensor<0 x i64>, %arg1: index, %arg2: !ptensor.ptensor<0 x i64>, %arg3: index) -> (!ptensor.ptensor<0 x i64>, index) {
 // CHECK: [[V1:%.*]] = "ptensor.ewbin"
@@ -108,9 +108,9 @@ func.func @test_0d_inout(%arg0: !dist.dtensor<<0 x i64>>, %arg1: !dist.dtensor<<
 // -----
 module {
     "dist.runtime_prototypes"() : () -> ()
-    func.func @test_rebalance(%arg0: !dist.dtensor<<2 x i64>>) -> !dist.dtensor<<2 x i64>> {
-    %0 = "dist.rebalance"(%arg0) : (!dist.dtensor<<2 x i64>>) -> !dist.dtensor<<2 x i64>>
-    return %0 : !dist.dtensor<<2 x i64>>
+    func.func @test_rebalance(%arg0: !dist.dtensor<<2 x i64>, false>) -> !dist.dtensor<<2 x i64>, true> {
+    %0 = "dist.rebalance"(%arg0) : (!dist.dtensor<<2 x i64>, false>) -> !dist.dtensor<<2 x i64>, true>
+    return %0 : !dist.dtensor<<2 x i64>, true>
     }
 }
 // CHECK-LABEL: func.func @test_rebalance(%arg0: !ptensor.ptensor<2 x i64>, %arg1: index, %arg2: memref<2xindex>, %arg3: memref<2xindex>) -> (!ptensor.ptensor<2 x i64>, index, memref<2xindex>, memref<2xindex>) {

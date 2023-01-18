@@ -46,7 +46,6 @@ module {
 // CHECK: "dist.team_of"
 // CHECK: "dist.rebalance"
 // CHECK: "dist.local_tensor_of"
-// CHECK: "dist.rebalance"
 // CHECK: "dist.local_tensor_of"
 // CHECK: "ptensor.ewbin"
 // CHECK: "dist.team_of"
