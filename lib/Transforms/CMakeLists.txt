@@ -5,6 +5,8 @@ add_mlir_library(IMEXTransforms
   SetSPIRVAbiAttribute.cpp
   AddOuterParallelLoop.cpp
   LowerMemRefCopy.cpp
+  CollapseDimensions.cpp
+  ParallelLoopTiling.cpp
 
   ADDITIONAL_HEADER_DIRS
   ${PROJECT_SOURCE_DIR}/imex/Transforms

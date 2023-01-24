@@ -91,4 +91,26 @@ def LowerMemRefCopy : Pass<"imex-lower-memref-copy", "::mlir::func::FuncOp"> {
     ];
 }
 
+def CollapseDimensions : Pass<"imex-linalg-collapse-dimensions", "::mlir::func::FuncOp"> {
+  let summary = "Collapse dimensions of Linalg Ops on tensor ops.";
+  let description = [{
+    This Pass converts multi-dimentional element-wise linalg tensor operations into 1-dimentional
+    ones to help better gpu mapping
+  }];
+  let constructor = "imex::createCollapseDimensionsPass()";
+  let dependentDialects = [ "::mlir::linalg::LinalgDialect" ];
+}
+
+def LoopTilingOnSCFParallel : Pass<"imex-loop-tiling-on-scf-parallel"> {
+  let summary = "Tile parallel loops for Intel GPU workgroup/localgroup mapping";
+  let description = [{
+    This Pass tiles a 1-level parallel loop into 2-level parallel loop such that
+    the following gpu mapping pass can map the outter loop to gpu workgroup and map
+    the inner parallel loop to gpu localgroup.
+  }];
+
+  let constructor = "imex::createParallelLoopTilingPass()";
+  let dependentDialects = ["::mlir::AffineDialect"];
+}
+
 #endif // _IMEX_TRANSFORMS_PASSES_TD_INCLUDED_
