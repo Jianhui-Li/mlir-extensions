@@ -53,7 +53,24 @@ static bool computeAndSetTileSize(ParallelOp op,
   } else {
     return false;
   }
-  auto tile = value < 64 ? value : 128;
+
+  int64_t tile = 0;
+
+  SmallVector<int64_t> LocalGroupSizes{1024, 512, 256, 128};
+  int i = 0;
+  while (i < LocalGroupSizes.size()) {
+    if (value % LocalGroupSizes[i] == 0) {
+      tile = LocalGroupSizes[i];
+      break;
+    }
+    i++;
+  }
+
+  if (tile == 0 && value > 1024)
+    return false;
+  else if (tile == 0)
+    tile = value;
+
   tileSizes.push_back(tile);
   return true;
 }
