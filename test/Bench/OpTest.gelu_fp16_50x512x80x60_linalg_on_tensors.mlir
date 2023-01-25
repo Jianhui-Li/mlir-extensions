@@ -1,6 +1,5 @@
 #map = affine_map<(d0, d1, d2, d3) -> (d0, d1, d2, d3)>
 module attributes {torch.debug_module_name = "GELU"} {
-  memref.global "private" constant @__constant_50x512x80x60xf16 : memref<50x512x80x60xf16> = dense<1.299800e+00>
   func.func @forward(%arg0: tensor<50x512x80x60xf16>) -> tensor<50x512x80x60xf16> {
     %cst = arith.constant 1.000000e+00 : f16
     %cst_0 = arith.constant 2.000000e+00 : f16
@@ -19,8 +18,8 @@ module attributes {torch.debug_module_name = "GELU"} {
     return %1 : tensor<50x512x80x60xf16>
   }
   func.func @main() {
-    %0 = memref.get_global @__constant_50x512x80x60xf16 : memref<50x512x80x60xf16>
-    %1 = call @forward(%0) : (memref<50x512x80x60xf16>) -> memref<50x512x80x60xf16>
-     return
+    %0= arith.constant dense<1.3>:tensor<50x512x80x60xf16>
+    %1 = call @forward(%0) : (tensor<50x512x80x60xf16>) -> tensor<50x512x80x60xf16>
+    return
   }
 }

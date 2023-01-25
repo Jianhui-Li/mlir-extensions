@@ -1,6 +1,7 @@
 // linalg dialect to gpu dialect lowering pipeline
 // Ready for vulkan runner or narrow scope l0/sycl runner starting from GPU dialect.
 builtin.module(convert-tensor-to-linalg
+    func.func(imex-linalg-collapse-dimensions)
     arith-bufferize
     func.func(empty-tensor-to-alloc-tensor
           eliminate-empty-tensors
@@ -12,9 +13,12 @@ builtin.module(convert-tensor-to-linalg
     func-bufferize
     func.func(finalizing-bufferize
           convert-linalg-to-parallel-loops
+	  canonicalize
+	  imex-loop-tiling-on-scf-parallel
           imex-add-outer-parallel-loop
           gpu-map-parallel-loops
           convert-parallel-loops-to-gpu)
+    canonicalize
 // insert-gpu-allocs pass can have client-api = opencl or vulkan args
     func.func(insert-gpu-allocs{client-api=opencl})
     canonicalize
