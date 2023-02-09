@@ -29,46 +29,88 @@ namespace dist {
 
 // Create a DistTensor from a PTensor and meta data
 inline ::mlir::Value
-createDistTensor(::mlir::Location &loc, ::mlir::OpBuilder &builder,
+createDistTensor(const ::mlir::Location &loc, ::mlir::OpBuilder &builder,
                  ::mlir::Value pt, bool balanced, ::mlir::ValueRange gshape,
                  ::mlir::ValueRange loffsets, ::mlir::Value team) {
-  return builder.create<::imex::dist::InitDistTensorOp>(loc, pt, balanced, team,
+  return builder.create<::imex::dist::InitDistTensorOp>(loc, pt, team, balanced,
                                                         gshape, loffsets);
 }
 
 // create operation returning global shape of DistTensor
-inline ::mlir::ValueRange createGlobalShapeOf(::mlir::Location &loc,
+inline ::mlir::ValueRange createGlobalShapeOf(const ::mlir::Location &loc,
                                               ::mlir::OpBuilder &builder,
                                               ::mlir::Value dt) {
   return builder.create<::imex::dist::GlobalShapeOfOp>(loc, dt).getGShape();
 }
 
 // create operation returning local offsets of DistTensor
-inline ::mlir::ValueRange createLocalOffsetsOf(::mlir::Location &loc,
+inline ::mlir::ValueRange createLocalOffsetsOf(const ::mlir::Location &loc,
                                                ::mlir::OpBuilder &builder,
                                                ::mlir::Value dt) {
   return builder.create<::imex::dist::LocalOffsetsOfOp>(loc, dt).getLOffsets();
 }
 
 // create operation returning the local Tensor of DistTensor
-inline ::mlir::Value createLocalTensorOf(::mlir::Location &loc,
+inline ::mlir::Value createLocalTensorOf(const ::mlir::Location &loc,
                                          ::mlir::OpBuilder &builder,
                                          ::mlir::Value dt) {
   return builder.create<::imex::dist::LocalTensorOfOp>(loc, dt).getLTensor();
 }
 
 // create operation returning the team of DistTensor
-inline ::mlir::Value createTeamOf(::mlir::Location &loc,
+inline ::mlir::Value createTeamOf(const ::mlir::Location &loc,
                                   ::mlir::OpBuilder &builder,
                                   ::mlir::Value dt) {
   return builder.create<::imex::dist::TeamOfOp>(loc, dt).getTeam();
 }
 
-// create operation returning the re-balanced tensor
-inline ::mlir::Value createReBalance(::mlir::Location &loc,
-                                     ::mlir::OpBuilder &builder,
-                                     ::mlir::Value dt) {
-  return builder.create<::imex::dist::ReBalanceOp>(loc, dt).getResult(0);
+inline ::mlir::Value createNProcs(const ::mlir::Location &loc,
+                                  ::mlir::OpBuilder &builder,
+                                  ::mlir::Value team) {
+  return builder.create<::imex::dist::NProcsOp>(loc, team);
+}
+
+inline ::mlir::Value createPRank(const ::mlir::Location &loc,
+                                 ::mlir::OpBuilder &builder,
+                                 ::mlir::Value team) {
+  return builder.create<::imex::dist::PRankOp>(loc, team);
+}
+
+// create operation returning balanced status of DistTensor
+inline ::mlir::Value createIsBalanced(const ::mlir::Location &loc,
+                                      ::mlir::OpBuilder &builder,
+                                      ::mlir::Value dt) {
+  return builder.create<::imex::dist::IsBalancedOp>(loc, dt).getIsBalanced();
+}
+
+// create operation returning the re-partitioned tensor
+inline ::mlir::Value createRePartition(const ::mlir::Location &loc,
+                                       ::mlir::OpBuilder &builder,
+                                       ::mlir::Value dt,
+                                       const ::mlir::ValueRange &offs,
+                                       const ::mlir::ValueRange &szs) {
+  return builder.create<::imex::dist::RePartitionOp>(loc, dt.getType(), dt,
+                                                     offs, szs);
+}
+// create operation returning the re-partitioned tensor
+inline ::mlir::Value createRePartition(const ::mlir::Location &loc,
+                                       ::mlir::OpBuilder &builder,
+                                       ::mlir::Value dt) {
+  return builder.create<::imex::dist::RePartitionOp>(loc, dt);
+}
+
+inline auto createLocalPartition(const ::mlir::Location &loc,
+                                 ::mlir::OpBuilder &builder, ::mlir::Value dt,
+                                 ::mlir::Value team = {},
+                                 ::mlir::ValueRange gShape = {}) {
+  if (!team)
+    team = createTeamOf(loc, builder, dt);
+  if (gShape.empty())
+    gShape = createGlobalShapeOf(loc, builder, dt);
+  auto nProcs = createNProcs(loc, builder, team);
+  auto pRank = createPRank(loc, builder, team);
+  return builder.create<::imex::dist::LocalPartitionOp>(loc, nProcs, pRank,
+                                                        gShape);
 }
 
 } // namespace dist

@@ -34,12 +34,23 @@ template <typename T> struct EasyVal {
           const ElType &value)
       : _value(value), _loc(&loc), _builder(&builder) {}
   /// Create Value from C++ value
-  template <typename X = T, typename std::enable_if<
-                                std::is_integral<X>::value>::type * = nullptr>
+  template <
+      typename X = T,
+      typename std::enable_if<std::is_integral<X>::value &&
+                              !std::is_same<X, bool>::value>::type * = nullptr>
   EasyVal(const ::mlir::Location &loc, ::mlir::OpBuilder &builder, X value)
       : _value(createInt<sizeof(T) * 8>(loc, builder, value)), _loc(&loc),
         _builder(&builder) {
     static_assert(std::is_integral_v<T>);
+  }
+
+  /// Create Value from C++ bool is_same
+  template <typename X = T, typename std::enable_if<
+                                std::is_same<X, bool>::value>::type * = nullptr>
+  EasyVal(const ::mlir::Location &loc, ::mlir::OpBuilder &builder, bool value)
+      : _value(createInt<1>(loc, builder, value)), _loc(&loc),
+        _builder(&builder) {
+    static_assert(std::is_same_v<T, bool>);
   }
 
   /// @return wrapped mlir::Value
@@ -75,6 +86,14 @@ template <typename T> struct EasyVal {
   EasyVal<X> operator/(EasyVal<X> const &r) const {
     return {*_loc, *_builder,
             _builder->create<::mlir::arith::DivSIOp>(*_loc, _value, r.get())};
+  }
+
+  /// modulo expressions
+  template <typename X = T, typename std::enable_if<
+                                std::is_integral<X>::value>::type * = nullptr>
+  EasyVal<X> operator%(EasyVal<X> const &r) const {
+    return {*_loc, *_builder,
+            _builder->create<::mlir::arith::RemSIOp>(*_loc, _value, r.get())};
   }
 
   /// min of the expressions

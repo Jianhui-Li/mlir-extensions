@@ -22,12 +22,13 @@
 #include <mlir/IR/Types.h>
 
 #include "PTensorDefs.h"
-#include <imex/Dialect/PTensor/Utils/Utils.h>
 
 #include <imex/Dialect/PTensor/IR/PTensorOpsDialect.h.inc>
 #define GET_TYPEDEF_CLASSES
 #include <imex/Dialect/PTensor/IR/PTensorOpsTypes.h.inc>
 #define GET_OP_CLASSES
 #include <imex/Dialect/PTensor/IR/PTensorOps.h.inc>
+
+#include <imex/Dialect/PTensor/Utils/Utils.h>
 
 #endif // _PTensor_OPS_H_INCLUDED_

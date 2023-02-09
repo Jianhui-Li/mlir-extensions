@@ -68,6 +68,11 @@ class TensorDialect;
 namespace gpu {
 class GPUDialect;
 } // namespace gpu
+
+namespace bufferization {
+class BufferizationDialect;
+} // namespace bufferization
+
 } // namespace mlir
 
 namespace imex {

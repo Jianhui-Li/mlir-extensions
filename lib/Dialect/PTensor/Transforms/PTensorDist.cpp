@@ -123,37 +123,25 @@ struct DistExtractSliceOpRWP
   ::mlir::LogicalResult
   matchAndRewrite(::imex::ptensor::ExtractSliceOp op,
                   ::mlir::PatternRewriter &rewriter) const override {
-    auto loc = op.getLoc();
+
+    // get input and type
     auto src = op.getSource();
-    // get input
-    auto inpPtTyp = src.getType().dyn_cast<::imex::dist::DistTensorType>();
-    if (!inpPtTyp) {
+    auto inpDTTyp = src.getType().dyn_cast<::imex::dist::DistTensorType>();
+    auto outDTTyp = op.getType().dyn_cast<::imex::dist::DistTensorType>();
+    auto outPTTyp = op.getType().dyn_cast<::imex::ptensor::PTensorType>();
+
+    if ((!inpDTTyp && outPTTyp) ||
+        outDTTyp) { //} || (op->hasOneUse() &&
+                    // op->user_begin()->getName().getStringRef()
+                    //== "dist.init_dist_tensor")) {
       return ::mlir::failure();
     }
 
-    // Get the local part of the global slice, team, rank, offsets
-    auto slcOffs = op.getOffsets();
-    auto slcSizes = op.getSizes();
-    auto slcStrides = op.getStrides();
+    auto vDTTYp =
+        ::imex::dist::DistTensorType::get(rewriter.getContext(), outPTTyp);
+    rewriter.replaceOpWithNewOp<::imex::dist::ExtractSliceOp>(
+        op, vDTTYp, src, op.getOffsets(), op.getSizes(), op.getStrides());
 
-    // Compute local part of slice
-    auto lSlice = rewriter.create<::imex::dist::LocalOfSliceOp>(
-        loc, src, slcOffs, slcSizes, slcStrides);
-    auto lSlcOffsets = lSlice.getLOffsets();
-    auto lSlcSizes = lSlice.getLSizes();
-    auto gSlcOffsets = lSlice.getGOffsets();
-    // auto gOffsets = lSlice.getGOffsets();
-
-    // create local view
-    auto lPTnsr = createLocalTensorOf(loc, rewriter, src);
-    auto lView = rewriter.create<::imex::ptensor::ExtractSliceOp>(
-        loc, inpPtTyp.getPTensorType(), lPTnsr, lSlcOffsets, lSlcSizes,
-        slcStrides);
-
-    // init our new dist tensor
-    auto team = createTeamOf(loc, rewriter, src);
-    rewriter.replaceOp(op, createDistTensor(loc, rewriter, lView, false,
-                                            slcSizes, gSlcOffsets, team));
     return ::mlir::success();
   }
 };
@@ -184,16 +172,17 @@ struct DistInsertSliceOpRWP
     auto slcSizes = op.getSizes();
     auto slcStrides = op.getStrides();
 
-    // get slice info and create distributed view
-    auto lSlice = rewriter.create<::imex::dist::LocalOfSliceOp>(
-        loc, dst, slcOffs, slcSizes, slcStrides);
-    auto lSlcOffsets = lSlice.getLOffsets();
-    auto lSlcSizes = lSlice.getLSizes();
-    // don't need lSlice.getGOffsets();
-
-    // get local ptensors and apply to InsertSliceOp
+    // get local ptensors
     auto lDst = createLocalTensorOf(loc, rewriter, dst);
     auto lSrc = createLocalTensorOf(loc, rewriter, src);
+
+    // get slice info and create distributed view
+    auto lSlice = rewriter.create<::imex::dist::LocalTargetOfSliceOp>(
+        loc, dst, slcOffs, slcSizes, slcStrides);
+    auto lSlcOffsets = lSlice.getTOffsets();
+    auto lSlcSizes = lSlice.getTSizes();
+
+    // apply to InsertSliceOp
     rewriter.replaceOpWithNewOp<::imex::ptensor::InsertSliceOp>(
         op, lDst, lSrc, lSlcOffsets, lSlcSizes, slcStrides);
 
@@ -298,41 +287,53 @@ struct DistEWBinOpRWP : public RecOpRewritePattern<::imex::ptensor::EWBinOp> {
   ::mlir::LogicalResult
   matchAndRewrite(::imex::ptensor::EWBinOp op,
                   ::mlir::PatternRewriter &rewriter) const override {
-    auto loc = op.getLoc();
-    auto lhsDtTyp =
+
+    // get input and type
+    auto lhsDTTyp =
         op.getLhs().getType().dyn_cast<::imex::dist::DistTensorType>();
-    auto rhsDtTyp =
+    auto rhsDTTyp =
         op.getRhs().getType().dyn_cast<::imex::dist::DistTensorType>();
-    // return failure if wrong ops or not distributed
-    if (!lhsDtTyp || !rhsDtTyp) {
+    auto outDTTyp =
+        op.getResult().getType().dyn_cast<::imex::dist::DistTensorType>();
+    auto outPTTyp =
+        op.getResult().getType().dyn_cast<::imex::ptensor::PTensorType>();
+
+    if (((!lhsDTTyp || !rhsDTTyp) && outPTTyp) ||
+        outDTTyp) { //} || (op->hasOneUse() &&
+                    // op->user_begin()->getName().getStringRef() ==
+                    //"dist.init_dist_tensor")) {
       return ::mlir::failure();
     }
 
-    // local ewb operands
-    auto rbLhs = lhsDtTyp.getBalanced()
-                     ? op.getLhs()
-                     : createReBalance(loc, rewriter, op.getLhs());
-    auto lLhs = createLocalTensorOf(loc, rewriter, rbLhs);
-    // auto lLhs = createLocalTensorOf(loc, rewriter, op.getLhs());
-    auto rbRhs = rhsDtTyp.getBalanced()
-                     ? op.getRhs()
-                     : createReBalance(loc, rewriter, op.getRhs());
-    auto lRhs = createLocalTensorOf(loc, rewriter, rbRhs);
-    // auto lRhs = createLocalTensorOf(loc, rewriter, op.getRhs());
-    // return type same as lhs for now
-    auto retPtTyp = lLhs.getType(); // FIXME
-    auto ewbres = rewriter.create<::imex::ptensor::EWBinOp>(
-        loc, retPtTyp, op.getOp(), lLhs, lRhs);
-    // get global shape, offsets and team
-    auto team = createTeamOf(loc, rewriter, op.getLhs());
-    auto gShape = createGlobalShapeOf(loc, rewriter, op.getLhs());
-    auto nProcs = rewriter.create<::imex::dist::NProcsOp>(loc, team);
-    auto pRank = rewriter.create<::imex::dist::PRankOp>(loc, team);
-    auto lPart = rewriter.create<::imex::dist::LocalPartitionOp>(loc, nProcs,
-                                                                 pRank, gShape);
-    // and init our new dist tensor
-    rewriter.replaceOp(op, createDistTensor(loc, rewriter, ewbres, true, gShape,
-                                            lPart.getLOffsets(), team));
+    auto loc = op.getLoc();
+
+    // repartition if necessary
+
+#if 0
+    ::mlir::ValueRange tOffs, tSizes;
+
+    if(lhsDTTyp.getPTensorType().getRank() > 0 || rhsDTTyp.getPTensorType().getRank() > 0) {
+      auto tPart = createLocalPartition(loc, rewriter, op.getLhs());
+      tOffs = tPart.getLOffsets();
+      tSizes = tPart.getLShape();
+    }
+#endif
+
+    auto rbLhs =
+        lhsDTTyp.getPTensorType().getRank() == 0
+            ? op.getLhs()
+            : createRePartition(loc, rewriter, op.getLhs()); //, tOffs, tSizes);
+    auto rbRhs =
+        rhsDTTyp.getPTensorType().getRank() == 0
+            ? op.getRhs()
+            : createRePartition(loc, rewriter, op.getRhs()); //, tOffs, tSizes);
+
+    // replace with dist version of ewbinop
+    auto vDTTYp =
+        ::imex::dist::DistTensorType::get(rewriter.getContext(), outPTTyp);
+    rewriter.replaceOpWithNewOp<::imex::ptensor::EWBinOp>(
+        op, vDTTYp, op.getOp(), rbLhs, rbRhs);
+
     return ::mlir::success();
   }
 };
@@ -394,16 +395,20 @@ struct PTensorDistPass : public ::imex::PTensorDistBase<PTensorDistPass> {
 
   void runOnOperation() override {
 
-    groupOps<::imex::ptensor::ExtractSliceOp>(
-        this->getAnalysis<::mlir::DominanceInfo>(), this->getOperation(),
-        [](auto &op) { return op.getSource(); });
-
     ::mlir::FrozenRewritePatternSet patterns;
     insertPatterns<DistARangeOpRWP, DistCreateOpRWP, DistEWBinOpRWP,
                    DistReductionOpRWP, DistExtractMemRefOpRWP,
                    DistExtractSliceOpRWP, DistInsertSliceOpRWP>(getContext(),
                                                                 patterns);
     (void)::mlir::applyPatternsAndFoldGreedily(this->getOperation(), patterns);
+
+    groupOps<::imex::dist::ExtractSliceOp>(
+        this->getAnalysis<::mlir::DominanceInfo>(), this->getOperation(),
+        [](::imex::dist::ExtractSliceOp &op) { return true; },
+        [](::imex::dist::ExtractSliceOp &op) { return op.getOperands(); },
+        [](::imex::dist::ExtractSliceOp &, ::imex::dist::ExtractSliceOp &) {
+          return false;
+        });
   }
 };
 

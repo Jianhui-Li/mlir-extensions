@@ -43,6 +43,10 @@ namespace linalg {
 class LinalgDialect;
 } // namespace linalg
 
+namespace bufferization {
+class BufferizationDialect;
+} // namespace bufferization
+
 } // namespace mlir
 
 namespace imex {

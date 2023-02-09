@@ -56,8 +56,8 @@ def Dist_Tensor : Dist_Type<"DistTensor", "dtensor">
     A distributed PTensor needs information like offset and shape of local partition.
     The DistTensor type is used to define operations to carry and extract such information.
   }];
-  let parameters = (ins "::imex::ptensor::PTensorType":$p_tensor_type, "bool":$balanced);
-  let assemblyFormat = "`<` $p_tensor_type `,` $balanced `>`";
+  let parameters = (ins "::imex::ptensor::PTensorType":$p_tensor_type);
+  let assemblyFormat = "`<` $p_tensor_type `>`";
 }
 
 // Base class for dialect operations. This operation inherits from the base
@@ -105,16 +105,23 @@ def InitDistTensorOp : Dist_Op<"init_dist_tensor", [SameVariadicOperandSize, Pur
           - the process-local offsets
           - the distributed team
     }];
-    let arguments = (ins AnyType:$p_tensor, AnyType:$team, Variadic<Index>:$g_shape, Variadic<Index>:$l_offsets);
+    let arguments = (ins AnyType:$p_tensor, AnyType:$team, IndexAttr:$balanced, Variadic<Index>:$g_shape, Variadic<Index>:$l_offsets);
     let results = (outs Dist_Tensor);
+
+    let assemblyFormat = [{
+        $p_tensor $team $balanced $g_shape oilist(`offsets` $l_offsets) attr-dict `:` qualified(type(operands)) `to` `(`qualified(type(results))`)`
+    }];
+
     let builders = [
         // auto-deduce return type
-        OpBuilder<(ins "::mlir::Value":$p_tensor, "bool":$balanced, "::mlir::Value":$team, "::mlir::ValueRange":$g_shape, "::mlir::ValueRange":$l_offsets), [{
-            auto pTT = p_tensor.getType().dyn_cast<::imex::ptensor::PTensorType>();
-            assert(pTT && g_shape.size() == (size_t)pTT.getRank() && l_offsets.size() == (size_t)pTT.getRank());
+        OpBuilder<(ins "::mlir::Value":$tensor, "::mlir::Value":$team, "int64_t":$balanced, "::mlir::ValueRange":$g_shape, "::mlir::ValueRange":$l_offsets), [{
+            auto dtTyp = tensor.getType().dyn_cast<::imex::dist::DistTensorType>();
+            auto ptTyp = dtTyp ? dtTyp.getPTensorType() : tensor.getType().dyn_cast<::imex::ptensor::PTensorType>();
+            assert(ptTyp);
+            assert(l_offsets.empty() || l_offsets.size() == g_shape.size());
             build($_builder, $_state,
-                  ::imex::dist::DistTensorType::get($_builder.getContext(), pTT, balanced),
-                  p_tensor, team, g_shape, l_offsets);
+                  ::imex::dist::DistTensorType::get($_builder.getContext(), ptTyp),
+                  tensor, team, $_builder.getIndexAttr(balanced), g_shape, l_offsets);
         }]>,
     ];
 }
@@ -174,6 +181,18 @@ def TeamOfOp : Dist_Op<"team_of", []> {
     ];
 }
 
+def IsBalancedOp : Dist_Op<"is_balanced", []> {
+    let summary = "Determines whether the tensor is balanced or not.";
+    let arguments = (ins AnyType:$d_tensor);
+    let results = (outs Index:$is_balanced);
+    let builders = [
+      // auto-deduce return type from from operands
+      OpBuilder<(ins "::mlir::Value":$d_tensor), [{
+        build($_builder, $_state, $_builder.getIndexType(), d_tensor);
+      }]>,
+    ];
+}
+
 def LocalPartitionOp : Dist_Op<"local_partition", [SameVariadicResultSize, Pure]> {
     let summary = "Compute the shape and offsets of the local partition in number of elements (one for each dimension).";
     let arguments = (ins Index:$num_procs, Index:$p_rank, Variadic<Index>:$g_shape);
@@ -193,56 +212,111 @@ def LocalPartitionOp : Dist_Op<"local_partition", [SameVariadicResultSize, Pure]
     ];
 }
 
-def LocalOfSliceOp : Dist_Op<"local_of_slice",
+def LocalOffsetForTargetSliceOp : Dist_Op<"local_offset_for_target_slice",
+    [SameVariadicOperandSize, Pure]> {
+    let summary = "Compute local offset of a given requested partition of a given slice";
+    let description = [{
+        Slice and tensor operate on the global index space. This operation computes the
+        local part of the slice as provided as target - assuming it is owned locally. The operation
+        returns local offsets relative to the local data/tensor.
+    }];
+
+    let arguments = (ins
+        Variadic<Index>:$base_offsets,
+        Variadic<Index>:$target_offsets,
+        Variadic<Index>:$offsets,
+        Variadic<Index>:$strides
+    );
+    let results = (outs Variadic<Index>:$l_offsets);
+
+    let assemblyFormat = [{
+        `[` $base_offsets `]``[` $target_offsets `]` `[` $offsets `]``[` $strides `]` attr-dict `->` `(`qualified(type(results))`)`
+    }];
+
+    let builders = [
+        // auto-deduce return type
+        OpBuilder<(ins "::mlir::ValueRange":$boffsets, "::mlir::ValueRange":$toffsets, "::mlir::ValueRange":$offsets, "::mlir::ValueRange":$strides), [{
+            auto IndexType = $_builder.getIndexType();
+            ::mlir::SmallVector<::mlir::Type> rt(offsets.size(), IndexType);
+            build($_builder, $_state, ::mlir::TypeRange(rt), boffsets, toffsets, offsets, strides);
+        }]>,
+    ];
+}
+
+def LocalTargetOfSliceOp : Dist_Op<"local_target_of_slice",
     [SameVariadicOperandSize, SameVariadicResultSize, Pure]> {
     let summary = "Compute local overlap of a distributed tensor and slice";
     let description = [{
         Slice and tensor operate on the global index space. This operation computes the
         local part of the slice as owned by the local partition of the tensor. The operation
-        returns local offsets and sizes (e.g. relative to the local memref). Additionally,
-        it computes and returns the offsets of the resulting local slice relative to the global input slice.
+        returns local offsets and sizes relative to the local tensor.
     }];
 
     let arguments = (ins
-        AnyType:$d_tensor,
+        Dist_Tensor:$d_tensor,
         Variadic<Index>:$offsets,
         Variadic<Index>:$sizes,
         Variadic<Index>:$strides
     );
-    let results = (outs Variadic<Index>:$l_offsets, Variadic<Index>:$l_sizes, Variadic<Index>:$g_offsets);
+    let results = (outs Variadic<Index>:$t_offsets, Variadic<Index>:$t_sizes);
 
     let assemblyFormat = [{
-        $d_tensor `[` $offsets `]``[` $sizes `]``[` $strides `]` attr-dict `:` qualified(type($d_tensor)) `to` `(`qualified(type(results))`)`
+        $d_tensor `[` $offsets `]``[` $sizes `]``[` $strides `]` attr-dict qualified(type($d_tensor)) `to` `(`qualified(type(results))`)`
     }];
 
     let builders = [
         // auto-deduce return type
-        OpBuilder<(ins "::mlir::Value":$d_tensor, "::mlir::ValueRange":$offsets, "::mlir::ValueRange":$sizes, "::mlir::ValueRange":$strides), [{
+        OpBuilder<(ins "::mlir::Value":$src, "::mlir::ValueRange":$offsets, "::mlir::ValueRange":$sizes, "::mlir::ValueRange":$strides), [{
             auto IndexType = $_builder.getIndexType();
-            ::mlir::SmallVector<::mlir::Type> rt(offsets.size()*3, IndexType);
-            build($_builder, $_state, ::mlir::TypeRange(rt), d_tensor, offsets, sizes, strides);
+            ::mlir::SmallVector<::mlir::Type> rt(offsets.size()*2, IndexType);
+            build($_builder, $_state, ::mlir::TypeRange(rt), src, offsets, sizes, strides);
         }]>,
     ];
 }
 
-def ReBalanceOp : Dist_Op<"rebalance", []> {
-    let summary = "Repartition a tensor to be fully balanced.";
+def LocalBoundingBoxOp : Dist_Op<"local_bounding_box", [SameVariadicOperandSize, SameVariadicResultSize, Pure]> {
+    let summary = "Compute bounding box for data locally needed by given views.";
     let description = [{
-        Repartition a tensor to be fully balanced.
-        The resulting partitioning matches dense and unsliced tensors of the same size.
     }];
 
-    let arguments = (ins Variadic<AnyType>:$d_tensor);
-    let results = (outs Variadic<Dist_Tensor>);
+    let arguments = (ins Dist_Tensor:$base, Variadic<Index>:$offsets, Variadic<Index>:$sizes, Variadic<Index>:$strides,
+                         Variadic<Index>:$target_offsets, Variadic<Index>:$target_sizes,
+                         Variadic<Index>:$b_b_offsets, Variadic<Index>:$b_b_sizes);
+    let results = (outs Variadic<Index>:$result_offsets, Variadic<Index>:$result_sizes);
+
+    let assemblyFormat = [{
+        $base `[` $offsets `]``[` $sizes `]``[` $strides `]` `[` $target_offsets `]``[` $target_sizes `]` `[` $b_b_offsets `]``[` $b_b_sizes `]` attr-dict qualified(type($base)) `to` `(`qualified(type(results))`)`
+    }];
 
     let builders = [
         // auto-deduce return type: same as input
-        OpBuilder<(ins "::mlir::ValueRange":$d_tensor), [{
-            auto dTT = d_tensor.front().getType().dyn_cast<::imex::dist::DistTensorType>();
-            assert(dTT);
-            auto outT = ::imex::dist::DistTensorType::get($_builder.getContext(), dTT.getPTensorType(), true);
-            ::mlir::SmallVector<::mlir::Type> rt(d_tensor.size(), outT);
-            build($_builder, $_state, ::mlir::TypeRange(rt), d_tensor);
+        OpBuilder<(ins "::mlir::Value":$base, "::mlir::ValueRange":$offs, "::mlir::ValueRange":$sizes, "::mlir::ValueRange":$strides,
+                       "::mlir::ValueRange":$toffs, "::mlir::ValueRange":$tsizes,
+                       "::mlir::ValueRange":$bboffs, "::mlir::ValueRange":$bbsizes), [{
+            size_t rank = base.getType().dyn_cast<::imex::dist::DistTensorType>().getPTensorType().getRank();
+            assert(offs.size() == rank && sizes.size() == rank);
+            ::mlir::SmallVector<::mlir::Type> rt(2 * rank, $_builder.getIndexType());
+            build($_builder, $_state, ::mlir::TypeRange(rt), base, offs, sizes, strides, toffs, tsizes, bboffs, bbsizes);
+        }]>,
+    ];
+}
+
+def RePartitionOp : Dist_Op<"repartition", [AttrSizedOperandSegments, Pure]> {
+    let summary = "Repartition a tensor so that each process hold data locally needed by given views.";
+    let description = [{
+    }];
+
+    let arguments = (ins Dist_Tensor:$base, Variadic<Index>:$target_offsets, Variadic<Index>:$target_sizes);
+    let results = (outs Dist_Tensor);
+
+    let assemblyFormat = [{
+        $base oilist(`loffs` $target_offsets | `lsizes` $target_sizes) attr-dict `:` `(`qualified(type(operands))`)` `to` `(`qualified(type(results))`)`
+    }];
+
+    let builders = [
+        // auto-deduce return type: same as input
+        OpBuilder<(ins "::mlir::Value":$base), [{
+            build($_builder, $_state, base.getType(), base, {}, {});
         }]>,
     ];
 }
@@ -277,6 +351,43 @@ def AllReduceOp : Dist_Op<"allreduce", []> {
     // reduction operation and local tensor
     let arguments = (ins AnyAttr:$op, AnyMemRef:$data);
     let results = (outs AnyType);
+}
+
+// ============================================================================
+// (Extended) operations from PTEnsor
+// ============================================================================
+
+def ExtractSliceOp : Dist_Op<"extract_slice", [AttrSizedOperandSegments, Pure]> {
+    let summary = "distributed extract slice operation";
+    let description = [{
+        The "extract_slice" operation extract a tensor from another tensor as
+        specified by the operation's offsets, sizes and strides arguments.
+
+        The distributed extract_slice operation is a shallow wrapper around PTensor.extract_slice
+        and adds offsets and slices for targeted local partition.
+    }];
+
+    let arguments = (ins
+        AnyType:$source,
+        Variadic<Index>:$offsets,
+        Variadic<Index>:$sizes,
+        Variadic<Index>:$strides,
+        Variadic<Index>:$target_offsets,
+        Variadic<Index>:$target_sizes
+    );
+    let results = (outs AnyType:$result);
+
+    let assemblyFormat = [{
+        $source oilist(`offs` $offsets | `sizes` $sizes | `strides` $strides)  attr-dict `:` qualified(type($source)) `to` qualified(type($result)) oilist(`toffs` $target_offsets | `tsizes` $target_sizes)
+    }];
+
+    let builders = [
+        // auto-deduce return type
+        OpBuilder<(ins "::mlir::Type":$rtyp, "::mlir::Value":$d_tensor, "::mlir::ValueRange":$offsets, "::mlir::ValueRange":$sizes, "::mlir::ValueRange":$strides),
+        [{
+            build($_builder, $_state, rtyp, d_tensor, offsets, sizes, strides, {}, {});
+        }]>,
+    ];
 }
 
 #endif // _Dist_OPS_TD_INCLUDED_

@@ -84,7 +84,9 @@ def ConvertDistToStandard: Pass<"convert-dist-to-standard", "::mlir::ModuleOp"> 
                            "::mlir::linalg::LinalgDialect",
                            "::mlir::func::FuncDialect",
                            "::mlir::memref::MemRefDialect",
-                           "::mlir::arith::ArithDialect"];
+                           "::mlir::arith::ArithDialect",
+                           "::mlir::scf::SCFDialect",
+                           "::mlir::bufferization::BufferizationDialect"];
   let options = [];
 }
 

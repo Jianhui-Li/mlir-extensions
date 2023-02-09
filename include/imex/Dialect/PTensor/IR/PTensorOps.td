@@ -133,6 +133,15 @@ def ExtractMemRefOp : PTensor_Op<"extract_tensor", []> {
 
     let arguments = (ins AnyType:$input);
     let results = (outs AnyMemRef);
+
+    let builders = [
+        // auto-deduce return type
+        OpBuilder<(ins "::mlir::Value":$tnsr), [{
+            auto mrtyp = tnsr.getType().dyn_cast<::imex::ptensor::PTensorType>().getMemRefType();
+            assert(mrtyp);
+            build($_builder, $_state, mrtyp, tnsr);
+        }]>,
+    ];
 }
 
 def ExtractSliceOp : PTensor_Op<"extract_slice", [SameVariadicOperandSize, Pure]> {
@@ -150,7 +159,7 @@ def ExtractSliceOp : PTensor_Op<"extract_slice", [SameVariadicOperandSize, Pure]
     Variadic<Index>:$sizes,
     Variadic<Index>:$strides
   );
-  let results = (outs PTensor_PTensor:$result);
+  let results = (outs AnyType:$result);
 
   let assemblyFormat = [{
     $source `[` $offsets `]``[` $sizes `]``[` $strides `]` attr-dict `:` qualified(type($source)) `to` qualified(type($result))
@@ -247,7 +256,7 @@ def EWBinOp : PTensor_Op<"ewbin", []> {
     // arange takes 2 PTensorType operands: lhs and rhs
     let arguments = (ins AnyAttr:$op, AnyType:$lhs, AnyType:$rhs);
     // result is a ptensor
-    let results = (outs PTensor_PTensor);
+    let results = (outs AnyType);
 }
 
 def ReductionOp : PTensor_Op<"reduction", []> {

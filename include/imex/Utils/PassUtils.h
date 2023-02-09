@@ -142,18 +142,24 @@ inline auto createValuesFromMemRef(::mlir::OpBuilder &builder,
 
 // when possible, move up operations of a certain type so that they are
 // close together.
-template <typename OP, typename GETINPUT>
+template <typename OP, typename SELECT, typename GETINPUTS,
+          typename SINGULARIZE>
 void groupOps(::mlir::DominanceInfo &domA, ::mlir::Operation *root,
-              GETINPUT getInput) {
+              SELECT select, GETINPUTS getInputs, SINGULARIZE singularize) {
   llvm::SmallVector<OP> ops;
 
   // Find all operations of type OP within root
   root->walk([&](::mlir::Operation *op) {
-    if (auto typedOp = ::mlir::dyn_cast<OP>(op)) {
-      ops.emplace_back(typedOp);
-      return;
+    if (OP typedOp = ::mlir::dyn_cast<OP>(op)) {
+      if (select(typedOp)) {
+        ops.emplace_back(typedOp);
+        return;
+      }
     }
   });
+
+  if (ops.empty())
+    return;
 
   llvm::SmallVector<OP> dominators;
   llvm::SmallVector<OP> dominators2;
@@ -170,11 +176,23 @@ void groupOps(::mlir::DominanceInfo &domA, ::mlir::Operation *root,
       auto iPnt = dominator;
       for (auto op : ops) {
         if (domA.properlyDominates(dominator, op, false)) {
-          auto dTnsr = getInput(op);
-          auto defOp = dTnsr.getDefiningOp();
-          if (domA.properlyDominates(defOp, dominator)) {
-            op->moveAfter(iPnt);
-            iPnt = op;
+          bool can_move = true;
+          auto oprnds = getInputs(op);
+          for (auto d : oprnds) {
+            auto defOp = d.getDefiningOp();
+            if (!domA.properlyDominates(defOp, dominator)) {
+              can_move = false;
+              break;
+            }
+          }
+          if (can_move) {
+            if (singularize(dominator, op)) {
+              op->replaceAllUsesWith(dominator);
+              op->erase();
+            } else {
+              op->moveAfter(iPnt);
+              iPnt = op;
+            }
           } else {
             dominators2.emplace_back(op);
           }

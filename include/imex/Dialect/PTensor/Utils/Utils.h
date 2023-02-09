@@ -18,6 +18,7 @@
 
 #include <imex/Dialect/PTensor/IR/PTensorOps.h>
 #include <imex/Utils/PassUtils.h>
+#include <mlir/Dialect/Linalg/Utils/Utils.h>
 #include <mlir/Dialect/MemRef/IR/MemRef.h>
 #include <mlir/IR/Builders.h>
 
@@ -80,15 +81,36 @@ inline DType fromMLIR(const ::mlir::Type &typ) {
       return I1;
     };
   }
-  assert(!"Type not supprted by PTensor");
+  assert(!"Type not supported by PTensor");
+}
+
+inline ::mlir::Value createDType(::mlir::Location &loc,
+                                 ::mlir::OpBuilder &builder, ::mlir::Type mt) {
+  return createInt<sizeof(int) * 8>(
+      loc, builder, static_cast<int>(::imex::ptensor::fromMLIR(mt)));
 }
 
 inline ::mlir::Value createDType(::mlir::Location &loc,
                                  ::mlir::OpBuilder &builder,
                                  ::mlir::MemRefType mrt) {
-  return createInt<sizeof(int) * 8>(
-      loc, builder,
-      static_cast<int>(::imex::ptensor::fromMLIR(mrt.getElementType())));
+  return createDType(loc, builder, mrt.getElementType());
+}
+
+inline auto createGetLocalSizes(::mlir::Location loc,
+                                ::mlir::OpBuilder &builder,
+                                ::mlir::Value lPTnsr) {
+  auto PTTyp = lPTnsr.getType().dyn_cast<::imex::ptensor::PTensorType>();
+  assert(PTTyp);
+  auto lMemRef = builder.create<::imex::ptensor::ExtractMemRefOp>(
+      loc, PTTyp.getMemRefType(), lPTnsr);
+  auto rank = PTTyp.getRank();
+  ::mlir::SmallVector<::mlir::Value> dims(rank);
+
+  for (int64_t i = 0; i < rank; ++i) {
+    dims[i] = ::mlir::linalg::createOrFoldDimOp(builder, loc, lMemRef, i);
+  }
+
+  return dims;
 }
 
 // template <int W, typename T>
