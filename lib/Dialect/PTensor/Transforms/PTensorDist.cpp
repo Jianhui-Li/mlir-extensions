@@ -172,15 +172,31 @@ struct DistInsertSliceOpRWP
     auto slcSizes = op.getSizes();
     auto slcStrides = op.getStrides();
 
-    // get local ptensors
-    auto lDst = createLocalTensorOf(loc, rewriter, dst);
-    auto lSrc = createLocalTensorOf(loc, rewriter, src);
-
     // get slice info and create distributed view
     auto lSlice = rewriter.create<::imex::dist::LocalTargetOfSliceOp>(
         loc, dst, slcOffs, slcSizes, slcStrides);
-    auto lSlcOffsets = lSlice.getTOffsets();
+    ::mlir::ValueRange lSlcOffs = lSlice.getTOffsets();
     auto lSlcSizes = lSlice.getTSizes();
+
+    // Repartition source
+    auto rpSrc = createRePartition(loc, rewriter, src, lSlcOffs, lSlcSizes);
+
+    // translate target slice offs to relative local
+    auto lOffs = createLocalOffsetsOf(loc, rewriter, dst);
+    auto rank = lSlcSizes.size();
+    ::mlir::SmallVector<::mlir::Value> lSlcOffsets;
+    for (unsigned i = 0; i < rank; ++i) {
+      auto tOff = easyIdx(loc, rewriter, lSlcOffs[i]);
+      auto stride = easyIdx(loc, rewriter, slcStrides[i]);
+      auto sOff = easyIdx(loc, rewriter, slcOffs[i]);
+      auto lOff = easyIdx(loc, rewriter, lOffs[i]);
+      auto zero = easyIdx(loc, rewriter, 0);
+      lSlcOffsets.emplace_back((sOff + (tOff * stride) - lOff).max(zero).get());
+    }
+
+    // get local ptensors
+    auto lDst = createLocalTensorOf(loc, rewriter, dst);
+    auto lSrc = createLocalTensorOf(loc, rewriter, rpSrc);
 
     // apply to InsertSliceOp
     rewriter.replaceOpWithNewOp<::imex::ptensor::InsertSliceOp>(
