@@ -211,7 +211,7 @@ struct DistCoalescePass : public ::imex::DistCoalesceBase<DistCoalescePass> {
         ::imex::dist::LocalBoundingBoxOp bbox(nullptr);
         ::mlir::SmallVector<::mlir::ValueRange> tOffsVec, tSizesVec;
 
-        builder.setInsertionPoint(_extracts.front());
+        builder.setInsertionPoint(_rpops.front());
         auto team = createTeamOf(base->getLoc(), builder, base->getResult(0));
         auto nProcs = createNProcs(base->getLoc(), builder, team);
         auto pRank = createPRank(base->getLoc(), builder, team);
@@ -265,33 +265,26 @@ struct DistCoalescePass : public ::imex::DistCoalesceBase<DistCoalescePass> {
           // right now we support only balanced target partitions
           assert(e.getTargetOffsets().empty() && e.getTargetSizes().empty());
 
-          ::mlir::SmallVector<::mlir::Value> args;
-          args.emplace_back(combined);
-          for (auto o : e.getOffsets())
-            args.emplace_back(o);
-          for (auto o : e.getSizes())
-            args.emplace_back(o);
-          for (auto o : e.getStrides())
-            args.emplace_back(o);
-          for (auto o : tOffs)
-            args.emplace_back(o);
-          for (auto o : tSizes)
-            args.emplace_back(o);
-          int32_t rank = (int32_t)e.getOffsets().size();
+          // replace repartition with new extractslice
+          auto nES = builder.create<::imex::dist::ExtractSliceOp>(
+              e.getLoc(), o.getResult().getType(), combined, e.getOffsets(),
+              e.getSizes(), e.getStrides(), tOffs, tSizes);
+          o->replaceAllUsesWith(::mlir::ValueRange{nES.getResult()});
 
-          builder.updateRootInPlace(e, [&e, &args, &builder, rank]() {
-            auto name = e.getOperandSegmentSizesAttrName();
-            std::array<int32_t, 6> segszs{1, rank, rank, rank, rank, rank};
-            e->setOperands(args);
-            auto attr = builder.getDenseI32ArrayAttr(segszs);
-            e->setAttr(name, attr);
-          });
+          // replace all extract uses as well
+          // FIXME: uses of orig extractslice might be before first repartition
+          //        we'll get a compiler error in that case
+          e->replaceAllUsesWith(::mlir::ValueRange{nES.getResult()});
+        }
 
-          // also eliminate related repartition ops
-          builder.replaceOp(o, e.getResult());
+        for (auto o : _rpops) {
+          o->erase();
+        }
+        for (auto o : _extracts) {
+          o->erase();
         }
       }
-    } // while(rbs.size());
+    }
   }
 };
 
