@@ -94,9 +94,6 @@ struct DistCoalescePass : public ::imex::DistCoalesceBase<DistCoalescePass> {
     if (op.getTargetSizes().size() == 0 && op->hasOneUse() &&
         ::mlir::isa<::imex::ptensor::EWBinOp>(*op->user_begin()) &&
         op.getBase().template getDefiningOp<::imex::ptensor::EWBinOp>()) {
-      std::cerr << "yey ";
-      op.dump();
-      std::cerr << std::endl;
       return true;
     }
     return false;
@@ -123,6 +120,14 @@ struct DistCoalescePass : public ::imex::DistCoalesceBase<DistCoalescePass> {
         singularize);
 #endif
 
+    // group all create ops
+    groupOps<::imex::ptensor::CreateOp>(
+        this->getAnalysis<::mlir::DominanceInfo>(), root,
+        [](::imex::ptensor::CreateOp &op) { return true; },
+        [](::imex::ptensor::CreateOp &op) { return op.getOperands(); },
+        [](::imex::ptensor::CreateOp &, ::imex::ptensor::CreateOp &) {
+          return false;
+        });
     // group all repartition ops
     groupOps<::imex::dist::RePartitionOp>(
         this->getAnalysis<::mlir::DominanceInfo>(), root,
@@ -152,7 +157,6 @@ struct DistCoalescePass : public ::imex::DistCoalesceBase<DistCoalescePass> {
           tmpOps.emplace_back(typedOp);
         } else {
           auto base = getBase(typedOp.getBase());
-          base.first->dump();
           rbs[base.first].emplace_back(
               std::make_pair(typedOp, std::move(base.second)));
         }
@@ -246,9 +250,6 @@ struct DistCoalescePass : public ::imex::DistCoalesceBase<DistCoalescePass> {
             bbox = builder.create<::imex::dist::LocalBoundingBoxOp>(
                 loc, base->getResult(0), e.getOffsets(), e.getSizes(),
                 e.getStrides(), tOffs, tSizes, offs, szs);
-            std::cerr << "bbox: ";
-            bbox.dump();
-            std::cerr << std::endl;
           }
         }
 

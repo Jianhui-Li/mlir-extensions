@@ -178,8 +178,8 @@ struct ExtractSliceLowering
     // source and result are expected to be of PTensorType
     auto srcTnsrTyp =
         adaptor.getSource().getType().dyn_cast<::mlir::MemRefType>();
-    // op.getSource().getType().dyn_cast<::imex::ptensor::PTensorType>();
-    if (!srcTnsrTyp)
+    auto outTnsrTyp = op.getType().dyn_cast<::imex::ptensor::PTensorType>();
+    if (!srcTnsrTyp || !outTnsrTyp)
       return ::mlir::failure();
     // auto srcTnsrTyp = srcPtTyp.getMemRefType();
     // auto dstTnsrTyp =
@@ -195,8 +195,8 @@ struct ExtractSliceLowering
     // mlir::Value view = builder.create<mlir::tensor::ExtractSliceOp>(
     // loc, viewTensorType, srcTensor, offsets, sizes, strides);
     rewriter.replaceOpWithNewOp<::mlir::memref::SubViewOp>(
-        op, adaptor.getSource(), adaptor.getOffsets(), adaptor.getSizes(),
-        adaptor.getStrides());
+        op, outTnsrTyp.getMemRefType(), adaptor.getSource(),
+        adaptor.getOffsets(), adaptor.getSizes(), adaptor.getStrides());
 
     return ::mlir::success();
   }
@@ -495,6 +495,24 @@ struct EWBinOpLowering
     // llvm::SmallVector<mlir::Value, 2> oprnds = { lhsTnsr, rhsTnsr };
 
     // create binop as linalg::generic
+#if 0
+    ::mlir::SmallVector<::mlir::AffineExpr> lhsExprs, rhsExprs, resExprs;
+    ::mlir::SmallVector<::mlir::Value> symbols;
+    auto one = createIndex(loc, rewriter, 1);
+    for (int i = 0; i < lhsRank; ++i) {
+      lhsExprs.emplace_back(rewriter.getAffineDimExpr(i) * rewriter.getAffineSymbolExpr(i));
+      symbols.emplace_back(one);
+    }
+    for (int i = 0; i < rhsRank; ++i) {
+      rhsExprs.emplace_back(rewriter.getAffineDimExpr(i) * rewriter.getAffineSymbolExpr(lhsRank + i));
+    }
+    for (unsigned i = 0; i < rank; ++i) {
+      resExprs.emplace_back(rewriter.getAffineDimExpr(i));
+      symbols.emplace_back(one);
+    }
+    auto maps = ::mlir::AffineMap::inferFromExprList({lhsExprs, rhsExprs, resExprs});
+#endif
+
     const ::mlir::AffineMap maps[] = {
         ::mlir::AffineMap::getMinorIdentityMap(rank, lhsRank,
                                                rewriter.getContext()),

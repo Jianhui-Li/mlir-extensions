@@ -108,7 +108,9 @@ struct ExtractSliceOpConverter
     // get input and type
     auto src = op.getSource();
     auto inpDTTyp = src.getType().dyn_cast<::imex::dist::DistTensorType>();
-    if (!inpDTTyp) {
+    auto resDTTyp =
+        op.getResult().getType().dyn_cast<::imex::dist::DistTensorType>();
+    if (!inpDTTyp || !resDTTyp) {
       return ::mlir::failure();
     }
 
@@ -150,7 +152,7 @@ struct ExtractSliceOpConverter
     // create local view
     auto lTnsr = createLocalTensorOf(loc, rewriter, src);
     auto lView = rewriter.create<::imex::ptensor::ExtractSliceOp>(
-        loc, inpDTTyp.getPTensorType(), lTnsr, lSlcOffsets, tSizes, slcStrides);
+        loc, resDTTyp.getPTensorType(), lTnsr, lSlcOffsets, tSizes, slcStrides);
 
     // init our new dist tensor
     auto team = createTeamOf(loc, rewriter, src);
@@ -176,32 +178,39 @@ struct EWBinOpConverter
                   ::imex::ptensor::EWBinOp::Adaptor adaptor,
                   ::mlir::ConversionPatternRewriter &rewriter) const override {
 
-    auto lhsDtTyp =
-        op.getLhs().getType().dyn_cast<::imex::dist::DistTensorType>();
-    auto rhsDtTyp =
-        op.getRhs().getType().dyn_cast<::imex::dist::DistTensorType>();
+    auto lhs = op.getLhs();
+    auto rhs = op.getRhs();
+    auto lhsDtTyp = lhs.getType().dyn_cast<::imex::dist::DistTensorType>();
+    auto rhsDtTyp = rhs.getType().dyn_cast<::imex::dist::DistTensorType>();
+    auto resDtTyp =
+        op.getResult().getType().dyn_cast<::imex::dist::DistTensorType>();
     // return failure if wrong ops or not distributed
-    if (!lhsDtTyp || !rhsDtTyp) {
+    if (!lhsDtTyp || !rhsDtTyp || !resDtTyp) {
       return ::mlir::failure();
     }
 
+    auto lhsPtTyp = lhsDtTyp.getPTensorType();
+    // auto rhsPtTyp = rhsDtTyp.getPTensorType();
+    auto resPtTyp = resDtTyp.getPTensorType();
+
     auto loc = op.getLoc();
     // local ewb operands
-    auto lLhs = createLocalTensorOf(loc, rewriter, op.getLhs());
-    auto lRhs = createLocalTensorOf(loc, rewriter, op.getRhs());
+    auto lLhs = createLocalTensorOf(loc, rewriter, lhs);
+    auto lRhs = createLocalTensorOf(loc, rewriter, rhs);
 
     // return type same as lhs for now
-    auto retPtTyp = lLhs.getType(); // FIXME
     auto ewbres = rewriter.create<::imex::ptensor::EWBinOp>(
-        loc, retPtTyp, op.getOp(), lLhs, lRhs);
+        loc, resPtTyp, op.getOp(), lLhs, lRhs);
 
     // get global shape, offsets and team
-    auto team = createTeamOf(loc, rewriter, op.getLhs());
-    auto gShape = createGlobalShapeOf(loc, rewriter, op.getLhs());
-    auto lPart = createLocalPartition(loc, rewriter, op.getLhs(), team, gShape);
+    auto ref = resPtTyp.getRank() == lhsPtTyp.getRank() ? lhs : rhs;
+    auto team = createTeamOf(loc, rewriter, ref);
+    auto gShape = createGlobalShapeOf(loc, rewriter, ref);
+    auto lPart = createLocalPartition(loc, rewriter, ref, team, gShape);
     // and init our new dist tensor
     rewriter.replaceOp(op, createDistTensor(loc, rewriter, ewbres, true, gShape,
                                             lPart.getLOffsets(), team));
+
     return ::mlir::success();
   }
 };
@@ -503,11 +512,9 @@ struct LocalOffsetForTargetSliceOpConverter
     auto lOff = slcOff + (tOff * slcStride) - bOff;
 
     // to store in output [lOffsets]
-    ::mlir::SmallVector<::mlir::Value> results(rank);
+    auto zero = createIndex(loc, rewriter, 0);
+    ::mlir::SmallVector<::mlir::Value> results(rank, zero);
     results[0 * rank] = lOff.get();
-    for (auto i = 1; i < rank; ++i) {
-      results[i] = slcOffs[i];
-    }
 
     rewriter.replaceOp(op, results);
     return ::mlir::success();
@@ -588,12 +595,12 @@ struct LocalTargetOfSliceOpConverter
               loc, ::mlir::ValueRange{start.get(), zeroIdx.get()});
         });
 
-    ::mlir::SmallVector<::mlir::Value> results(2 * rank);
+    ::mlir::SmallVector<::mlir::Value> results(2 * rank, zeroIdx.get());
     results[0 * rank] = offSz.getResult(0);
     results[1 * rank] = offSz.getResult(1);
 
     for (auto i = 1; i < rank; ++i) {
-      results[0 * rank + i] = slcOffs[i];
+      // results[0 * rank + i] = slcOffs[i];
       results[1 * rank + i] = slcSizes[i];
     }
 
