@@ -16,7 +16,9 @@
 #define _DIST_UTILS_H_INCLUDED_
 
 #include <imex/Dialect/Dist/IR/DistOps.h>
-#include <imex/Utils/PassUtils.h>
+#include <imex/Dialect/PTensor/IR/PTensorOps.h>
+#include <mlir/IR/Builders.h>
+#include <mlir/IR/Dominance.h>
 
 #include <vector>
 
@@ -93,9 +95,9 @@ inline ::mlir::Value createRePartition(const ::mlir::Location &loc,
                                                      offs, szs);
 }
 // create operation returning the re-partitioned tensor
-inline ::mlir::Value createRePartition(const ::mlir::Location &loc,
-                                       ::mlir::OpBuilder &builder,
-                                       ::mlir::Value dt) {
+inline ::imex::dist::RePartitionOp
+createRePartition(const ::mlir::Location &loc, ::mlir::OpBuilder &builder,
+                  ::mlir::Value dt) {
   return builder.create<::imex::dist::RePartitionOp>(loc, dt);
 }
 
@@ -111,6 +113,36 @@ inline auto createLocalPartition(const ::mlir::Location &loc,
   auto pRank = createPRank(loc, builder, team);
   return builder.create<::imex::dist::LocalPartitionOp>(loc, nProcs, pRank,
                                                         gShape);
+}
+
+// return true if there is a write operation between a and b (including b) to
+// any operand of b returns false if a does not properly dominate b or no write
+// in between a and b
+inline bool hasWriteBetween(::mlir::Operation *a, ::mlir::Operation *b,
+                            ::mlir::DominanceInfo &dom) {
+  if (!dom.properlyDominates(a, b))
+    return false;
+  if (::mlir::dyn_cast<::imex::ptensor::InsertSliceOp>(b) ||
+      ::mlir::dyn_cast<::imex::ptensor::CreateOp>(b) ||
+      ::mlir::dyn_cast<::imex::ptensor::ARangeOp>(b) ||
+      ::mlir::dyn_cast<::imex::ptensor::ReductionOp>(b)) {
+    return true;
+  } else if (auto op = ::mlir::dyn_cast<::imex::dist::InitDistTensorOp>(b)) {
+    auto dop = op.getPTensor().getDefiningOp();
+    return dop && hasWriteBetween(a, dop, dom);
+  } else if (auto op = ::mlir::dyn_cast<::imex::ptensor::EWBinOp>(b)) {
+    auto lhs = op.getLhs().getDefiningOp();
+    auto rhs = op.getRhs().getDefiningOp();
+    return (lhs && hasWriteBetween(a, lhs, dom)) ||
+           (rhs && hasWriteBetween(a, rhs, dom));
+  } else if (auto op = ::mlir::dyn_cast<::imex::dist::ExtractSliceOp>(b)) {
+    auto dop = op.getSource().getDefiningOp();
+    return dop && hasWriteBetween(a, dop, dom);
+  } else {
+    std::cerr << "oops. Unexpected op found: ";
+    b->dump();
+    assert(false);
+  }
 }
 
 } // namespace dist

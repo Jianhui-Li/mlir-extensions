@@ -274,7 +274,7 @@ def LocalTargetOfSliceOp : Dist_Op<"local_target_of_slice",
     ];
 }
 
-def LocalBoundingBoxOp : Dist_Op<"local_bounding_box", [SameVariadicOperandSize, SameVariadicResultSize, Pure]> {
+def LocalBoundingBoxOp : Dist_Op<"local_bounding_box", [AttrSizedOperandSegments, SameVariadicResultSize, Pure]> {
     let summary = "Compute bounding box for data locally needed by given views.";
     let description = [{
     }];
@@ -285,7 +285,7 @@ def LocalBoundingBoxOp : Dist_Op<"local_bounding_box", [SameVariadicOperandSize,
     let results = (outs Variadic<Index>:$result_offsets, Variadic<Index>:$result_sizes);
 
     let assemblyFormat = [{
-        $base `[` $offsets `]``[` $sizes `]``[` $strides `]` `[` $target_offsets `]``[` $target_sizes `]` `[` $b_b_offsets `]``[` $b_b_sizes `]` attr-dict qualified(type($base)) `to` `(`qualified(type(results))`)`
+        $base `[` $offsets `]``[` $sizes `]``[` $strides `]` `[` $target_offsets `]``[` $target_sizes `]` oilist(`bboffs` $b_b_offsets | `bb_sizes` $b_b_sizes) attr-dict qualified(type($base)) `to` `(`qualified(type(results))`)`
     }];
 
     let builders = [
@@ -388,6 +388,28 @@ def ExtractSliceOp : Dist_Op<"extract_slice", [AttrSizedOperandSegments, Pure]> 
             build($_builder, $_state, rtyp, d_tensor, offsets, sizes, strides, {}, {});
         }]>,
     ];
+}
+
+
+def InsertSliceOp : Dist_Op<"insert_slice", [AttrSizedOperandSegments]> {
+  let summary = "Copy values from a distributed tensor into a slice of another.";
+  let description = [{
+    Copy values from a distributed tensor into a slice of another.
+  }];
+
+  let arguments = (ins
+    AnyType:$destination,
+    AnyType:$source,
+    Variadic<Index>:$offsets,
+    Variadic<Index>:$sizes,
+    Variadic<Index>:$strides,
+    Variadic<Index>:$target_offsets,
+    Variadic<Index>:$target_sizes
+  );
+
+  let assemblyFormat = [{
+    $source `into` $destination `[` $offsets `]``[` $sizes `]``[` $strides `]` attr-dict `:` qualified(type($destination)) `into` qualified(type($source)) oilist(`toffs` $target_offsets | `tsizes` $target_sizes)
+  }];
 }
 
 #endif // _Dist_OPS_TD_INCLUDED_

@@ -172,35 +172,21 @@ struct DistInsertSliceOpRWP
     auto slcSizes = op.getSizes();
     auto slcStrides = op.getStrides();
 
-    // get slice info and create distributed view
-    auto lSlice = rewriter.create<::imex::dist::LocalTargetOfSliceOp>(
+    // get target slice info
+    auto tSlice = rewriter.create<::imex::dist::LocalTargetOfSliceOp>(
         loc, dst, slcOffs, slcSizes, slcStrides);
-    ::mlir::ValueRange lSlcOffs = lSlice.getTOffsets();
-    auto lSlcSizes = lSlice.getTSizes();
+    ::mlir::ValueRange tSlcOffs = tSlice.getTOffsets();
+    auto tSlcSizes = tSlice.getTSizes();
 
     // Repartition source
-    auto rpSrc = createRePartition(loc, rewriter, src, lSlcOffs, lSlcSizes);
+    // notice: the source should have the same size as the target
+    //         this means there is no additional global offset in the source
+    //         so there is no need to incorporate global offsets or alike
+    auto rpSrc = createRePartition(loc, rewriter, src, tSlcOffs, tSlcSizes);
 
-    // translate target slice offs to relative local
-    auto lOffs = createLocalOffsetsOf(loc, rewriter, dst);
-    auto rank = lSlcSizes.size();
-    ::mlir::SmallVector<::mlir::Value> lSlcOffsets;
-    for (unsigned i = 0; i < rank; ++i) {
-      auto tOff = easyIdx(loc, rewriter, lSlcOffs[i]);
-      auto stride = easyIdx(loc, rewriter, slcStrides[i]);
-      auto sOff = easyIdx(loc, rewriter, slcOffs[i]);
-      auto lOff = easyIdx(loc, rewriter, lOffs[i]);
-      auto zero = easyIdx(loc, rewriter, 0);
-      lSlcOffsets.emplace_back((sOff + (tOff * stride) - lOff).max(zero).get());
-    }
-
-    // get local ptensors
-    auto lDst = createLocalTensorOf(loc, rewriter, dst);
-    auto lSrc = createLocalTensorOf(loc, rewriter, rpSrc);
-
-    // apply to InsertSliceOp
-    rewriter.replaceOpWithNewOp<::imex::ptensor::InsertSliceOp>(
-        op, lDst, lSrc, lSlcOffsets, lSlcSizes, slcStrides);
+    rewriter.replaceOpWithNewOp<::imex::dist::InsertSliceOp>(
+        op, dst, rpSrc, op.getOffsets(), op.getSizes(), op.getStrides(),
+        tSlcOffs, tSlcSizes);
 
     return ::mlir::success();
   }
@@ -418,13 +404,13 @@ struct PTensorDistPass : public ::imex::PTensorDistBase<PTensorDistPass> {
                                                                 patterns);
     (void)::mlir::applyPatternsAndFoldGreedily(this->getOperation(), patterns);
 
-    groupOps<::imex::dist::ExtractSliceOp>(
-        this->getAnalysis<::mlir::DominanceInfo>(), this->getOperation(),
-        [](::imex::dist::ExtractSliceOp &op) { return true; },
-        [](::imex::dist::ExtractSliceOp &op) { return op.getOperands(); },
-        [](::imex::dist::ExtractSliceOp &, ::imex::dist::ExtractSliceOp &) {
-          return false;
-        });
+    // groupOps<::imex::dist::ExtractSliceOp>(
+    //     this->getAnalysis<::mlir::DominanceInfo>(), this->getOperation(),
+    //     [](::imex::dist::ExtractSliceOp &op) { return true; },
+    //     [](::imex::dist::ExtractSliceOp &op) { return op.getOperands(); },
+    //     [](::imex::dist::ExtractSliceOp &, ::imex::dist::ExtractSliceOp &) {
+    //       return false;
+    //     }, hasWriteBetween);
   }
 };
 

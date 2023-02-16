@@ -181,19 +181,7 @@ struct ExtractSliceLowering
     auto outTnsrTyp = op.getType().dyn_cast<::imex::ptensor::PTensorType>();
     if (!srcTnsrTyp || !outTnsrTyp)
       return ::mlir::failure();
-    // auto srcTnsrTyp = srcPtTyp.getMemRefType();
-    // auto dstTnsrTyp =
-    // op.getDestination().getType().dyn_cast<::mlir::MemRefType>(); if
-    // (!dstTnsrTyp) return ::mlir::failure();
-    // auto source = adaptor.getSource();
-    // rewriter.create<::imex::ptensor::ExtractMemRefOp>(
-    // loc, srcTnsrTyp, op.getSource());
-    // and replace with tensor::extract_slice
-    // auto viewTensorType =
-    // ::mlir::tensor::ExtractSliceOp::inferCanonicalRankReducedResultType(
-    // retPtTyp.getRank(), srcTnsrTyp, offsets, sizes, strides);
-    // mlir::Value view = builder.create<mlir::tensor::ExtractSliceOp>(
-    // loc, viewTensorType, srcTensor, offsets, sizes, strides);
+
     rewriter.replaceOpWithNewOp<::mlir::memref::SubViewOp>(
         op, outTnsrTyp.getMemRefType(), adaptor.getSource(),
         adaptor.getOffsets(), adaptor.getSizes(), adaptor.getStrides());
@@ -225,20 +213,11 @@ struct InsertSliceLowering
     auto view = rewriter.create<::mlir::memref::SubViewOp>(
         loc, dst, adaptor.getOffsets(), adaptor.getSizes(),
         adaptor.getStrides());
-    // auto viewTnsrTyp = view.getType().dyn_cast<::mlir::MemRefType>();
 
-    // need memrefs to copy
-    // linalg::makeMemRefCopyOp(rewriter, loc, src, dst);
-    // auto srcMRTyp = ::mlir::MemRefType::get(srcTnsrTyp.getShape(),
-    // srcTnsrTyp.getElementType()); auto viewMRTyp =
-    // ::mlir::MemRefType::get(viewTnsrTyp.getShape(),
-    // viewTnsrTyp.getElementType()); auto srcMR =
-    // rewriter.create<::mlir::bufferization::ToMemrefOp>(loc, srcMRTyp, src);
-    // auto viewMR = rewriter.create<::mlir::bufferization::ToMemrefOp>(loc,
-    // viewMRTyp, view);
     rewriter.replaceOp(
         op, ::mlir::linalg::makeMemRefCopyOp(rewriter, loc, src, view)
                 .getResults());
+
     return ::mlir::success();
   }
 };

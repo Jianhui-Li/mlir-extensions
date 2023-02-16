@@ -47,31 +47,6 @@ namespace imex {
 namespace dist {
 namespace {
 
-template <typename T>
-inline auto createExtractPtrFromMemRef(::mlir::OpBuilder &builder,
-                                       ::mlir::Location loc, ::mlir::Value mr,
-                                       T meta) {
-  auto off = easyIdx(loc, builder, meta.getOffset());
-  auto aptr = easyIdx(
-      loc, builder,
-      builder.create<::mlir::memref::ExtractAlignedPointerAsIndexOp>(loc, mr));
-  return (aptr + (off * easyIdx(loc, builder, sizeof(uint64_t)))).get();
-}
-
-inline auto createExtractPtrFromMemRef(::mlir::OpBuilder &builder,
-                                       ::mlir::Location loc, ::mlir::Value mr) {
-  auto meta = builder.create<::mlir::memref::ExtractStridedMetadataOp>(loc, mr);
-  return createExtractPtrFromMemRef(builder, loc, mr, meta);
-}
-
-inline auto createExtractPtrFromMemRefFromValues(::mlir::OpBuilder &builder,
-                                                 ::mlir::Location loc,
-                                                 ::mlir::ValueRange elts) {
-  auto mr =
-      createMemRefFromElements(builder, loc, builder.getIndexType(), elts);
-  return createExtractPtrFromMemRef(builder, loc, mr);
-}
-
 // create function prototype fo given function name, arg-types and
 // return-types
 inline void requireFunc(::mlir::Location &loc, ::mlir::OpBuilder &builder,
@@ -135,7 +110,9 @@ struct ExtractSliceOpConverter
     auto lSlice = rewriter.create<::imex::dist::LocalOffsetForTargetSliceOp>(
         loc, lOffs, tOffs, slcOffs, slcStrides);
     auto lSlcOffsets = lSlice.getLOffsets();
+
 #if 0
+    auto zero = createIndex(loc, rewriter, 0);
     (void)
     rewriter.create<::mlir::func::CallOp>(
         loc, "_idtr_extractslice", ::mlir::TypeRange(),
@@ -145,8 +122,8 @@ struct ExtractSliceOpConverter
                             createExtractPtrFromMemRefFromValues(rewriter, loc, tOffs),
                             createExtractPtrFromMemRefFromValues(rewriter, loc, tSizes),
                             createExtractPtrFromMemRefFromValues(rewriter, loc, lSlcOffsets),
-                            createExtractPtrFromMemRefFromValues(rewriter, loc, lSlcSizes),
-                            createExtractPtrFromMemRefFromValues(rewriter, loc, gSlcOffsets)}
+                            zero,
+                            zero}
     );
 #endif
     // create local view
@@ -158,6 +135,87 @@ struct ExtractSliceOpConverter
     auto team = createTeamOf(loc, rewriter, src);
     rewriter.replaceOp(op, createDistTensor(loc, rewriter, lView, false,
                                             slcSizes, tOffs, team));
+    return ::mlir::success();
+  }
+};
+
+struct InsertSliceOpConverter
+    : public ::mlir::OpConversionPattern<::imex::dist::InsertSliceOp> {
+  using ::mlir::OpConversionPattern<
+      ::imex::dist::InsertSliceOp>::OpConversionPattern;
+
+  ::mlir::LogicalResult
+  matchAndRewrite(::imex::dist::InsertSliceOp op,
+                  ::imex::dist::InsertSliceOp::Adaptor adaptor,
+                  ::mlir::ConversionPatternRewriter &rewriter) const override {
+
+    auto dst = op.getDestination();
+    auto src = op.getSource();
+    auto dstPTTyp = dst.getType().dyn_cast<::imex::dist::DistTensorType>();
+    auto srcPTTyp = src.getType().dyn_cast<::imex::dist::DistTensorType>();
+    if (!dstPTTyp || !srcPTTyp) {
+      return ::mlir::failure();
+    }
+
+    auto loc = op.getLoc();
+    auto slcOffs = op.getOffsets();
+    auto slcSizes = op.getSizes();
+    auto slcStrides = op.getStrides();
+    ::mlir::ValueRange tOffs = op.getTargetOffsets();
+    ::mlir::ValueRange tSizes = op.getTargetSizes();
+
+    if (tOffs.empty()) {
+      // get slice info and create distributed view
+      auto lSlice = rewriter.create<::imex::dist::LocalTargetOfSliceOp>(
+          loc, dst, slcOffs, slcSizes, slcStrides);
+      tOffs = lSlice.getTOffsets();
+      tSizes = lSlice.getTSizes();
+    }
+
+    // translate target slice offs to relative local
+    auto lOffs = createLocalOffsetsOf(loc, rewriter, dst);
+    auto rank = tSizes.size();
+    ::mlir::SmallVector<::mlir::Value> lSlcOffsets;
+    for (unsigned i = 0; i < rank; ++i) {
+      auto tOff = easyIdx(loc, rewriter, tOffs[i]);
+      auto stride = easyIdx(loc, rewriter, slcStrides[i]);
+      auto sOff = easyIdx(loc, rewriter, slcOffs[i]);
+      auto lOff = easyIdx(loc, rewriter, lOffs[i]);
+      auto zero = easyIdx(loc, rewriter, 0);
+      lSlcOffsets.emplace_back((sOff + (tOff * stride) - lOff).max(zero).get());
+    }
+
+    // get local ptensors
+    auto lDst = createLocalTensorOf(loc, rewriter, dst);
+    auto lSrc = createLocalTensorOf(loc, rewriter, src);
+
+#if 0
+    auto sMemRef = rewriter.create<::imex::ptensor::ExtractMemRefOp>(loc, srcPTTyp.getPTensorType().getMemRefType(), lSrc);
+    auto memrefType = ::mlir::UnrankedMemRefType::get(rewriter.getI64Type(), {});
+    auto srcUMR = rewriter.create<mlir::memref::CastOp>(loc, memrefType, sMemRef);
+    rewriter.create<::mlir::func::CallOp>(loc, "printMemrefI64", ::mlir::TypeRange(), srcUMR.getResult());
+    auto zero = createIndex(loc, rewriter, 0);
+    auto xxx = createLocalOffsetsOf(loc, rewriter, src);
+    auto dMemRef = rewriter.create<::imex::ptensor::ExtractMemRefOp>(loc, dstPTTyp.getPTensorType().getMemRefType(), lDst);
+    auto dMeta = rewriter.create<::mlir::memref::ExtractStridedMetadataOp>(loc, dMemRef);
+    auto sMeta = rewriter.create<::mlir::memref::ExtractStridedMetadataOp>(loc, sMemRef);
+    (void)
+    rewriter.create<::mlir::func::CallOp>(
+        loc, "_idtr_extractslice", ::mlir::TypeRange(),
+        ::mlir::ValueRange({createExtractPtrFromMemRefFromValues(rewriter, loc, lOffs),
+                            createExtractPtrFromMemRefFromValues(rewriter, loc, xxx),
+                            createExtractPtrFromMemRefFromValues(rewriter, loc, slcStrides),
+                            createExtractPtrFromMemRefFromValues(rewriter, loc, tOffs),
+                            createExtractPtrFromMemRefFromValues(rewriter, loc, tSizes),
+                            createExtractPtrFromMemRefFromValues(rewriter, loc, lSlcOffsets),
+                            createExtractPtrFromMemRefFromValues(rewriter, loc, {dMeta.getOffset(), sMeta.getOffset()}),
+                            zero})
+    );
+#endif
+    // apply to InsertSliceOp
+    rewriter.replaceOpWithNewOp<::imex::ptensor::InsertSliceOp>(
+        op, lDst, lSrc, lSlcOffsets, tSizes, slcStrides);
+
     return ::mlir::success();
   }
 };
@@ -236,11 +294,14 @@ struct RuntimePrototypesOpConverter
     auto rankType = indexType;
     auto opType =
         rewriter.getIntegerType(sizeof(::imex::ptensor::ReduceOpId) * 8);
-
+    auto mrType = ::mlir::UnrankedMemRefType::get(rewriter.getI64Type(), {});
+    requireFunc(loc, rewriter, module, "printMemrefI64", {mrType}, {});
+    auto IdxmrType =
+        ::mlir::UnrankedMemRefType::get(rewriter.getIndexType(), {});
+    requireFunc(loc, rewriter, module, "printMemrefInd", {IdxmrType}, {});
     requireFunc(loc, rewriter, module, "_idtr_nprocs", {indexType},
                 {indexType});
     requireFunc(loc, rewriter, module, "_idtr_prank", {indexType}, {indexType});
-    // autp mrType = ::mlir::UnrankedMemRefType::get(indexType, {});
     requireFunc(
         loc, rewriter, module, "_idtr_reduce_all",
         // {getMemRefType(rewriter.getContext(), 0, dtype), dtypeType, opType},
@@ -503,18 +564,17 @@ struct LocalOffsetForTargetSliceOpConverter
     auto slcStrides = adaptor.getStrides();
     int64_t rank = bOffs.size();
 
-    // Get the vals from dim 0
-    auto bOff = easyIdx(loc, rewriter, bOffs[0]);
-    auto slcOff = easyIdx(loc, rewriter, slcOffs[0]);
-    auto slcStride = easyIdx(loc, rewriter, slcStrides[0]);
-    auto tOff = easyIdx(loc, rewriter, tOffs[0]);
+    ::mlir::SmallVector<::mlir::Value> results;
 
-    auto lOff = slcOff + (tOff * slcStride) - bOff;
+    for (auto i = 0; i < rank; ++i) {
+      auto bOff = easyIdx(loc, rewriter, bOffs[i]);
+      auto slcOff = easyIdx(loc, rewriter, slcOffs[i]);
+      auto slcStride = easyIdx(loc, rewriter, slcStrides[i]);
+      auto tOff = easyIdx(loc, rewriter, tOffs[i]);
 
-    // to store in output [lOffsets]
-    auto zero = createIndex(loc, rewriter, 0);
-    ::mlir::SmallVector<::mlir::Value> results(rank, zero);
-    results[0 * rank] = lOff.get();
+      auto lOff = slcOff + (tOff * slcStride) - bOff;
+      results.emplace_back(lOff.get());
+    }
 
     rewriter.replaceOp(op, results);
     return ::mlir::success();
@@ -708,6 +768,7 @@ struct LocalBoundingBoxOpConverter
     auto tSizes = op.getTargetSizes();
     auto bbOffs = op.getBBOffsets();
     auto bbSizes = op.getBBSizes();
+    bool hasBB = !bbOffs.empty();
 
     auto rank = vOffs.size();
 
@@ -722,10 +783,10 @@ struct LocalBoundingBoxOpConverter
       auto tSz = easyIdx(loc, rewriter, tSizes[i]);
       auto vOff = easyIdx(loc, rewriter, vOffs[i]);
       auto st = easyIdx(loc, rewriter, vStrides[i]);
-      auto bbOff = easyIdx(loc, rewriter, bbOffs[i]);
       auto off = vOff + tOff;
+      auto bbOff = hasBB ? easyIdx(loc, rewriter, bbOffs[i]) : off;
       auto end = off + (tSz * st);
-      auto bbEnd = bbOff + easyIdx(loc, rewriter, bbSizes[i]);
+      auto bbEnd = hasBB ? bbOff + easyIdx(loc, rewriter, bbSizes[i]) : end;
       bbOff = bbOff.min(off);
       auto bbSz = bbEnd.max(end) - bbOff;
       oprnds[i] = bbOff.get();
@@ -792,8 +853,9 @@ struct RePartitionOpConverter
     auto szsPtr = createExtractPtrFromMemRefFromValues(rewriter, loc, tSizes);
 
     // create output tensor with target size
+    auto xxx = createInt(loc, rewriter, 4711);
     auto outTnsr = rewriter.create<::imex::ptensor::CreateOp>(
-        loc, tSizes, ::imex::ptensor::fromMLIR(elTyp), nullptr, nullptr,
+        loc, tSizes, ::imex::ptensor::fromMLIR(elTyp), xxx, nullptr,
         nullptr); // FIXME device
     auto outMRTyp = outTnsr.getType()
                         .dyn_cast<::imex::ptensor::PTensorType>()
@@ -929,9 +991,10 @@ struct ConvertDistToStandardPass
     // All the dist conversion patterns/rewriter
     ::mlir::RewritePatternSet patterns(&ctxt);
     patterns.insert<
-        ExtractSliceOpConverter, EWBinOpConverter, LocalBoundingBoxOpConverter,
-        RePartitionOpConverter, RuntimePrototypesOpConverter, NProcsOpConverter,
-        PRankOpConverter, InitDistTensorOpConverter, LocalPartitionOpConverter,
+        InsertSliceOpConverter, ExtractSliceOpConverter, EWBinOpConverter,
+        LocalBoundingBoxOpConverter, RePartitionOpConverter,
+        RuntimePrototypesOpConverter, NProcsOpConverter, PRankOpConverter,
+        InitDistTensorOpConverter, LocalPartitionOpConverter,
         LocalOffsetForTargetSliceOpConverter, LocalTargetOfSliceOpConverter,
         GlobalShapeOfOpConverter, IsBalancedOpConverter,
         LocalTensorOfOpConverter, LocalOffsetsOfOpConverter, TeamOfOpConverter,
@@ -956,13 +1019,15 @@ struct ConvertDistToStandardPass
         [](::mlir::func::CallOp &op) {
           return op.getCallee() == "_idtr_nprocs";
         },
-        [](::mlir::func::CallOp &op) { return op.getOperands(); }, singularize);
+        [](::mlir::func::CallOp &op) { return op.getOperands(); }, singularize,
+        [](auto, auto, auto &) { return false; });
     groupOps<::mlir::func::CallOp>(
         this->getAnalysis<::mlir::DominanceInfo>(), getOperation(),
         [](::mlir::func::CallOp &op) {
           return op.getCallee() == "_idtr_prank";
         },
-        [](::mlir::func::CallOp &op) { return op.getOperands(); }, singularize);
+        [](::mlir::func::CallOp &op) { return op.getOperands(); }, singularize,
+        [](auto, auto, auto &) { return false; });
   }
 };
 

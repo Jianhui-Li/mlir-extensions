@@ -15,6 +15,7 @@
 #define _IMEX_PASSUTILS_H_
 
 #include <mlir/Dialect/Arith/IR/Arith.h>
+#include <mlir/Dialect/Func/IR/FuncOps.h>
 #include <mlir/Dialect/MemRef/IR/MemRef.h>
 #include <mlir/Dialect/Tensor/IR/Tensor.h>
 #include <mlir/IR/Builders.h>
@@ -139,68 +140,111 @@ inline auto createValuesFromMemRef(::mlir::OpBuilder &builder,
   }
   return vals;
 }
+} // namespace imex
+
+// FIXME
+#include <imex/Utils/ArithUtils.h>
+
+namespace imex {
+template <typename T>
+inline auto createExtractPtrFromMemRef(::mlir::OpBuilder &builder,
+                                       ::mlir::Location loc, ::mlir::Value mr,
+                                       T meta) {
+  auto off = easyIdx(loc, builder, meta.getOffset());
+  auto aptr = easyIdx(
+      loc, builder,
+      builder.create<::mlir::memref::ExtractAlignedPointerAsIndexOp>(loc, mr));
+  return (aptr + (off * easyIdx(loc, builder, sizeof(uint64_t)))).get();
+}
+
+inline auto createExtractPtrFromMemRef(::mlir::OpBuilder &builder,
+                                       ::mlir::Location loc, ::mlir::Value mr) {
+  auto meta = builder.create<::mlir::memref::ExtractStridedMetadataOp>(loc, mr);
+  return createExtractPtrFromMemRef(builder, loc, mr, meta);
+}
+
+inline auto createExtractPtrFromMemRefFromValues(::mlir::OpBuilder &builder,
+                                                 ::mlir::Location loc,
+                                                 ::mlir::ValueRange elts) {
+  auto mr =
+      createMemRefFromElements(builder, loc, builder.getIndexType(), elts);
+  return createExtractPtrFromMemRef(builder, loc, mr);
+}
 
 // when possible, move up operations of a certain type so that they are
 // close together.
 template <typename OP, typename SELECT, typename GETINPUTS,
-          typename SINGULARIZE>
+          typename SINGULARIZE, typename HAS_WRITES>
 void groupOps(::mlir::DominanceInfo &domA, ::mlir::Operation *root,
-              SELECT select, GETINPUTS getInputs, SINGULARIZE singularize) {
-  llvm::SmallVector<OP> ops;
+              SELECT select, GETINPUTS getInputs, SINGULARIZE singularize,
+              HAS_WRITES has_writes) {
+
+  llvm::SmallVector<OP> dominators, dominators2;
 
   // Find all operations of type OP within root
   root->walk([&](::mlir::Operation *op) {
     if (OP typedOp = ::mlir::dyn_cast<OP>(op)) {
       if (select(typedOp)) {
-        ops.emplace_back(typedOp);
+        dominators.emplace_back(typedOp);
         return;
       }
     }
   });
 
-  if (ops.empty())
-    return;
-
-  llvm::SmallVector<OP> dominators;
-  llvm::SmallVector<OP> dominators2;
-  dominators2.emplace_back(ops.front());
-
   // we treat the first found op as the dominating operation
   // We try to move up all found ops to right after the dominator
   // Ops which cannot be be moved will serve as new dominators and we
   // recursively try to move remaining ops to them
-  do {
-    dominators.swap(
-        dominators2); // new dominators will get stored in dominators2
-    for (auto dominator : dominators) {
-      auto iPnt = dominator;
-      for (auto op : ops) {
-        if (domA.properlyDominates(dominator, op, false)) {
-          bool can_move = true;
-          auto oprnds = getInputs(op);
-          for (auto d : oprnds) {
-            auto defOp = d.getDefiningOp();
-            if (!domA.properlyDominates(defOp, dominator)) {
-              can_move = false;
-              break;
-            }
-          }
-          if (can_move) {
-            if (singularize(dominator, op)) {
-              op->replaceAllUsesWith(dominator);
-              op->erase();
-            } else {
-              op->moveAfter(iPnt);
-              iPnt = op;
-            }
-          } else {
-            dominators2.emplace_back(op);
+  while (dominators.size() > 1) {
+    auto dominator = dominators.front();
+    auto iPnt = dominator;
+    while (dominators.size() > 1) {
+      auto op = dominators.pop_back_val();
+      if (domA.properlyDominates(dominator, op, false)
+          /* && !has_writes(dominator, op, domA) */) {
+        bool can_move = true;
+        auto oprnds = getInputs(op);
+        for (auto d : oprnds) {
+          auto defOp = d.getDefiningOp();
+          if (!domA.properlyDominates(defOp, dominator)) {
+            can_move = false;
+            break;
           }
         }
+        if (can_move) {
+          if (singularize(dominator, op)) {
+            op->replaceAllUsesWith(dominator);
+            op->erase();
+          } else {
+            op->moveAfter(iPnt);
+            iPnt = op;
+          }
+          continue;
+        }
       }
+      // not dominated or not movable
+      dominators2.emplace_back(op);
     }
     dominators.clear();
-  } while (!dominators2.empty());
+    dominators.swap(dominators2);
+  }
+}
+
+inline void printValsAsMemRef(::mlir::Location loc, ::mlir::OpBuilder &builder,
+                              ::mlir::ValueRange vals) {
+  auto et = vals[0].getType();
+  auto memrefType = ::mlir::UnrankedMemRefType::get(et, {});
+  auto mr = createMemRefFromElements(builder, loc, et, vals);
+  auto cmr = builder.create<mlir::memref::CastOp>(loc, memrefType, mr);
+  if (et == builder.getIndexType()) {
+    builder.create<::mlir::func::CallOp>(loc, "printMemrefInd",
+                                         ::mlir::TypeRange(), cmr.getResult());
+  } else if (et == builder.getI64Type()) {
+    builder.create<::mlir::func::CallOp>(loc, "printMemrefI64",
+                                         ::mlir::TypeRange(), cmr.getResult());
+  } else {
+    assert(false);
+  }
 }
 
 } // namespace imex

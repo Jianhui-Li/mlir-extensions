@@ -10,6 +10,8 @@ set(LIBS
         MLIROptLib
         IMEXTransforms
         IMEXUtil
+        mlir_c_runner_utils
+        mlir_runner_utils
         )
 add_imex_tool(imex-opt imex-opt.cpp)
 
