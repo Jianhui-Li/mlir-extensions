@@ -102,73 +102,171 @@ struct DistCoalescePass : public ::imex::DistCoalesceBase<DistCoalescePass> {
     return false;
   }
 
-#if 0
-    // singularize calls to nprocs and prank
-    auto singularize = [](auto &op1, auto &op2) {
-      return op1.getTeam() == op2.getTeam();
-    };
-    groupOps<::imex::dist::NProcsOp>(
-        this->getAnalysis<::mlir::DominanceInfo>(), getOperation(),
-        [](::imex::dist::NProcsOp &op) { return true; },
-        [](::imex::dist::NProcsOp &op) { return std::array<::mlir::Value, 1>{op.getTeam()}; },
-        singularize);
-    groupOps<::imex::dist::PRankOp>(
-        this->getAnalysis<::mlir::DominanceInfo>(), getOperation(),
-        [](::imex::dist::PRankOp &op) { return true; },
-        [](::imex::dist::PRankOp &op) { return std::array<::mlir::Value, 1>{op.getTeam()}; },
-        singularize);
-#endif
-#if 0
-    // group all create ops
-    groupOps<::imex::ptensor::CreateOp>(
-        this->getAnalysis<::mlir::DominanceInfo>(), root,
-        [](::imex::ptensor::CreateOp &op) { return true; },
-        [](::imex::ptensor::CreateOp &op) { return op.getOperands(); },
-        [](::imex::ptensor::CreateOp &, ::imex::ptensor::CreateOp &) {
-          return false;
-        }, [](auto, auto, auto&){return false;});
-    // group all repartition ops
-    groupOps<::imex::dist::RePartitionOp>(
-        this->getAnalysis<::mlir::DominanceInfo>(), root,
-        [](::imex::dist::RePartitionOp &op) { return true; },
-        [](::imex::dist::RePartitionOp &op) { return op.getOperands(); },
-        [](::imex::dist::RePartitionOp &, ::imex::dist::RePartitionOp &) {
-          return false;
-        }, hasWriteBetween);
+  ::mlir::Operation *updateTargetPart(::mlir::IRRewriter &builder,
+                                      ::imex::dist::ExtractSliceOp op,
+                                      const ::mlir::ValueRange &tOffs,
+                                      const ::mlir::ValueRange &tSizes) {
 
-    using op_ex_pair =
-        ::std::pair<::imex::dist::RePartitionOp,
-                    ::mlir::SmallVector<::imex::dist::ExtractSliceOp>>;
-    std::vector<std::unordered_map<::mlir::Operation *,
-                                   ::mlir::SmallVector<op_ex_pair>>>
-        all_rbs;
-    std::vector<::imex::dist::RePartitionOp> tmpOps;
-#endif
+    // check if an existing target is the same as ours
+    auto offs = op.getTargetOffsets();
+    auto szs = op.getTargetSizes();
+    if (offs.size() > 0) {
+      assert(offs.size() == szs.size());
+      for (size_t i = 0; i < offs.size(); ++i) {
+        if ((tOffs[i] != offs[i] || tSizes[i] != szs[i]) && !op->hasOneUse()) {
+          // existing but different target -> need a new repartition for our
+          // back-propagation
+          auto val = op.getSource();
+          builder.setInsertionPointAfter(op);
+          return builder.create<::imex::dist::RePartitionOp>(
+              op->getLoc(), val.getType(), val, tOffs, tSizes);
+        }
+      }
+      // if same existing target -> nothing to be done
+    } else {
+      // no existing target -> use ours
+      op->insertOperands(op->getNumOperands(), tOffs);
+      op->insertOperands(op->getNumOperands(), tSizes);
+      const int32_t rank = static_cast<int32_t>(tOffs.size());
+      ::std::array<int32_t, 6> sSzs{1, rank, rank, rank, rank, rank};
+      op->setAttr(op.getOperandSegmentSizesAttrName(),
+                  builder.getDenseI32ArrayAttr(sSzs));
+    }
+    return nullptr;
+  }
 
+  // @return if op1 can be moved directly after op2
+  bool canMoveAfter(::mlir::DominanceInfo &dom, ::mlir::Operation *op1,
+                    ::mlir::Operation *op2) {
+    assert(op2 != op1);
+    if (dom.dominates(op2, op1)) {
+      for (auto o : op1->getOperands()) {
+        auto dOp = o.getDefiningOp();
+        if (dOp && !dom.dominates(dOp, op2)) {
+          return false;
+        }
+      }
+    }
+    return true;
+  }
+
+  // entry point for back propagation of target parts, starting with
+  // RePartitionOp Verifies that defining ops are what we assume/can handle and
+  // then starts actual back propagation
+  uint64_t backPropagatePart(
+      ::mlir::IRRewriter &builder, ::mlir::DominanceInfo &dom,
+      ::imex::dist::RePartitionOp rpOp, ::mlir::Operation *&nOp,
+      ::mlir::SmallVector<::imex::dist::RePartitionOp> &toDelete) {
+    nOp = nullptr;
+    auto offs = rpOp.getTargetOffsets();
+    if (offs.empty()) {
+      return 0;
+    }
+
+    auto defOp2 = offs[0].getDefiningOp();
+    if (defOp2) {
+      auto ltosOp = mlir::dyn_cast<::imex::dist::LocalTargetOfSliceOp>(defOp2);
+      assert(ltosOp);
+      auto fOp = ltosOp.getDTensor().getDefiningOp();
+      assert(fOp);
+      if (canMoveAfter(dom, defOp2, fOp)) {
+        defOp2->moveAfter(fOp);
+      } else {
+        // this is pretty strict, we might miss potential
+        return 0;
+      }
+    }
+    // else would mean it's a block arg which is fine anyway
+
+    auto szs = rpOp.getTargetSizes();
+    return backPropagatePart(builder, rpOp, offs, szs, nOp, toDelete);
+  }
+
+  // the actual back propagation of target parts
+  // if meeting a supported op, recursively gets defining ops and back
+  // propagates as it follows only supported ops, all other ops act as
+  // propagation barriers (e.g. insertsliceops) on the way it updates target
+  // info on extractsliceops and marks repartitionops for elimination
+  uint64_t backPropagatePart(
+      ::mlir::IRRewriter &builder, ::mlir::Operation *op,
+      const ::mlir::ValueRange &tOffs, const ::mlir::ValueRange &tSizes,
+      ::mlir::Operation *&nOp,
+      ::mlir::SmallVector<::imex::dist::RePartitionOp> &toDelete) {
+    ::mlir::Value val;
+    uint64_t n = 0;
+    nOp = nullptr;
+    if (auto typedOp = ::mlir::dyn_cast<::imex::dist::ExtractSliceOp>(op)) {
+      val = typedOp.getSource();
+      updateTargetPart(builder, typedOp, tOffs, tSizes);
+    } else if (auto typedOp =
+                   ::mlir::dyn_cast<::imex::dist::RePartitionOp>(op)) {
+      val = typedOp.getBase();
+      toDelete.emplace_back(typedOp);
+    } else if (auto typedOp = ::mlir::dyn_cast<::imex::ptensor::EWBinOp>(op)) {
+      auto defOp = typedOp.getLhs().getDefiningOp();
+      if (defOp) {
+        n = backPropagatePart(builder, defOp, tOffs, tSizes, nOp, toDelete);
+        assert(!nOp || !"not implemented yet");
+      }
+      val = typedOp.getRhs();
+    }
+    ::mlir::Operation *defOp = nullptr;
+    if (val) {
+      defOp = val.getDefiningOp();
+      ++n;
+    }
+    return defOp ? n + backPropagatePart(builder, defOp, tOffs, tSizes, nOp,
+                                         toDelete)
+                 : n;
+  }
+
+  // This pass tries to combine multiple repartitionops into one.
+  // Dependent operations (like extractsliceop) get adequately annotated.
+  //
+  // The basic idea is to compute a the bounding box of several repartitionops
+  // and use it for a single repartition. Dependent extractsliceops can then
+  // extract the appropriate part from that bounding box without further
+  // communication/repartitioning.
+  //
+  // 1. back-propagation of explicit target-parts
+  // 2. group and move extractsliceops
+  // 3. create base repartitionops and update dependent extractsliceops
   void runOnOperation() override {
 
     auto root = this->getOperation();
     ::mlir::IRRewriter builder(&getContext());
 
-    // Find all repartition operations which are temporaries in between EWBinOps
-    {
-      ::mlir::SmallVector<::imex::dist::RePartitionOp> tmpRPs;
-      root->walk([&](::mlir::Operation *op) {
-        if (auto typedOp = ::mlir::dyn_cast<::imex::dist::RePartitionOp>(op)) {
-          if (is_temp(typedOp)) {
-            tmpRPs.emplace_back(typedOp);
-          }
-        }
-      });
+    // back-propagate targets from repartitionops
 
-      // we can simply eliminate such temporaries
-      for (auto rp : tmpRPs) {
-        builder.replaceOp(rp, rp.getBase());
+    ::mlir::SmallVector<::imex::dist::RePartitionOp> rpToElimNew;
+    ::mlir::SmallVector<::imex::dist::RePartitionOp> rpOps;
+
+    // store all repartitionops with target in vector
+    root->walk([&](::imex::dist::RePartitionOp op) {
+      if (!op.getTargetOffsets().empty()) {
+        rpOps.emplace_back(op);
       }
+    });
+
+    auto &dom = this->getAnalysis<::mlir::DominanceInfo>();
+
+    // perform back propagation on each
+    for (auto iop : rpOps) {
+      ::mlir::Operation *nOp = nullptr;
+      backPropagatePart(builder, dom, iop, nOp, rpToElimNew);
+      assert(!nOp);
+    }
+
+    // eliminate no longer needed repartitionops
+    for (auto rp : rpToElimNew) {
+      builder.replaceOp(rp, rp.getBase());
     }
 
     // find insertslice, extractslice and repartition ops on the same base
     // pointer
+    // opsGroups holds independent partial operation sequences operating on a
+    // specific base pointer
+
     std::unordered_map<::mlir::Operation *,
                        ::mlir::SmallVector<::mlir::Operation *>>
         opsGroups;
@@ -189,13 +287,10 @@ struct DistCoalescePass : public ::imex::DistCoalesceBase<DistCoalescePass> {
       }
     });
 
-    // opsGroups holds independent partial operation sequences operating on a
-    // specific base pointer
-
+    // outer loop iterates base over base pointers
     for (auto grpP : opsGroups) {
       if (grpP.second.size() <= 1)
         continue;
-      // assert(::mlir::dyn_cast<::imex::dist::ExtractSliceOp>(grpP.second.front()));
 
       auto &base = grpP.first;
       auto &dom = this->getAnalysis<::mlir::DominanceInfo>();
@@ -205,11 +300,8 @@ struct DistCoalescePass : public ::imex::DistCoalesceBase<DistCoalescePass> {
       auto nProcs = createNProcs(base->getLoc(), builder, team);
       auto pRank = createPRank(base->getLoc(), builder, team);
 
-      for (auto j = grpP.second.begin(); j != grpP.second.end(); ++j) {
-        std::cerr << "yyy: ";
-        (*j)->dump();
-        std::cerr << std::endl;
-      }
+      // find groups operating on the same base, groups are separated by write
+      // operations (insertsliceops for now)
       for (auto j = grpP.second.begin(); j != grpP.second.end(); ++j) {
         ::mlir::SmallVector<::mlir::Operation *> grp;
         ::mlir::SmallVector<::mlir::Operation *> unhandled;
@@ -219,15 +311,16 @@ struct DistCoalescePass : public ::imex::DistCoalesceBase<DistCoalescePass> {
           if (::mlir::dyn_cast<::imex::dist::InsertSliceOp>(*i)) {
             break;
           }
-          std::cerr << "xxx: ";
-          (*i)->dump();
-          std::cerr << std::endl;
           grp.emplace_back(*i);
           if (::mlir::dyn_cast<::imex::dist::ExtractSliceOp>(*i)) {
             ++nEx;
           }
         }
 
+        // iterate over group until all ops are handled
+        // we might not be able to move all extractsliceops to the point which
+        // is early enough to have a single repartition. Hence we have to loop
+        // until we handled all sub-groups.
         while (grp.size() > 1) {
           ::mlir::SmallVector<::imex::dist::RePartitionOp> rpToElim;
           auto fOp = grp.front();
@@ -237,6 +330,7 @@ struct DistCoalescePass : public ::imex::DistCoalesceBase<DistCoalescePass> {
           ::mlir::ValueRange bbOffs, bbSizes;
           ::mlir::Operation *combined = nullptr;
 
+          // iterate group
           for (auto i = grp.begin(); i != grp.end(); ++i) {
             auto e = ::mlir::dyn_cast<::imex::dist::ExtractSliceOp>(*i);
             auto rp = ::mlir::dyn_cast<::imex::dist::RePartitionOp>(*i);
@@ -260,11 +354,18 @@ struct DistCoalescePass : public ::imex::DistCoalesceBase<DistCoalescePass> {
                   } else {
                     auto loc = e.getLoc();
                     builder.setInsertionPointAfter(bbIPnt);
-                    auto lPart = builder.create<::imex::dist::LocalPartitionOp>(
-                        loc, nProcs, pRank, e.getSizes());
-                    ::mlir::ValueRange tOffs = lPart.getLOffsets();
-                    ::mlir::ValueRange tSizes = lPart.getLShape();
-                    bbIPnt = lPart;
+                    ::mlir::ValueRange tOffs = e.getTargetOffsets();
+                    ::mlir::ValueRange tSizes = e.getTargetSizes();
+                    if (tOffs.empty()) {
+                      assert(tSizes.empty());
+                      auto lPart =
+                          builder.create<::imex::dist::LocalPartitionOp>(
+                              loc, nProcs, pRank, e.getSizes());
+                      tOffs = lPart.getLOffsets();
+                      tSizes = lPart.getLShape();
+                      bbIPnt = lPart;
+                      updateTargetPart(builder, e, tOffs, tSizes);
+                    }
 
                     auto rank = tOffs.size();
                     // extend local bounding box
@@ -286,12 +387,6 @@ struct DistCoalescePass : public ::imex::DistCoalesceBase<DistCoalescePass> {
                     }
                     e->moveAfter(eIPnt ? eIPnt : combined);
                     e->setOperand(0, combined->getResult(0));
-                    e->insertOperands(e->getNumOperands(), tOffs);
-                    e->insertOperands(e->getNumOperands(), tSizes);
-                    ::mlir::SmallVector<int32_t> sSzs(6, rank);
-                    sSzs[0] = 1;
-                    e->setAttr(e.getOperandSegmentSizesAttrName(),
-                               builder.getDenseI32ArrayAttr(sSzs));
                     eIPnt = *i;
                     // any repartitionops of this extract slice can potentially
                     // be eliminated
@@ -315,14 +410,13 @@ struct DistCoalescePass : public ::imex::DistCoalesceBase<DistCoalescePass> {
             // we try later with remaining unhandled ops
             unhandled.emplace_back(*i);
           }
+
+          // FIXME: handling of remaining repartitionops needs simplification
           for (auto o : rpToElim) {
             for (auto x : grp) {
               // elmiminate only if it is in our current group
               if (x == o) {
                 assert(o.getTargetOffsets().empty());
-                std::cerr << "rp: ";
-                o.dump();
-                std::cerr << std::endl;
                 // remove from unhandled
                 for (auto it = unhandled.begin(); it != unhandled.end(); ++it) {
                   if (*it == o) {
@@ -344,126 +438,6 @@ struct DistCoalescePass : public ::imex::DistCoalesceBase<DistCoalescePass> {
     }
   }
 };
-
-#if 0
-
-    for (auto &rbs : all_rbs) {
-      // for each base tensor combine views on it
-      for (auto &[base, ops] : rbs) {
-        ::mlir::SmallVector<::mlir::Value> _views;
-        ::mlir::SmallVector<::imex::dist::ExtractSliceOp> _extracts;
-        ::mlir::SmallVector<::imex::dist::RePartitionOp> _rpops;
-
-        // visit each view and store view info in _views and the extractslice op
-        // in _extracts
-        for (unsigned i = 0; i < ops.size(); ++i) {
-          if (ops[i].second.size() > 0) {
-            // _views.emplace_back(ops[i].first.getDTensor());
-            _extracts.emplace_back(ops[i].second.front());
-            _rpops.emplace_back(ops[i].first);
-          } else
-            assert(ops[i].second.empty());
-          // FIXME no support of views of views yet
-        }
-
-        // nothing to be done if there are not multiple views
-        // FIXME as long as our target partition is balanced we can just erase
-        // the repartition
-        if (_rpops.size() <= 1) {
-          // for(auto o : ops) {
-          //   // eliminate related repartition ops
-          //   builder.replaceOp(o.first, o.first->getOperand(0));
-          // }
-          continue;
-        }
-
-        // ::mlir::ValueRange views{_views};
-
-        // auto idxTyp = builder.getIndexType();
-        // auto t1Typ = ::mlir::TupleType::get(builder.getContext(),
-        // ::std::SmallVector<::mlir::Type>(rank, idxTyp)); auto t2Typ =
-        // ::mlir::TupleType::get(builder.getContext(),
-        // ::std::array<::mlir::Type>(3, t1Typ)); auto t3Typ =
-        // ::mlir::TupleType::get(builder.getContext(),
-        // ::std::SmallVector<::mlir::Type>(_extracts.size(), t2Typ));
-
-        ::imex::dist::LocalBoundingBoxOp bbox(nullptr);
-        ::mlir::SmallVector<::mlir::ValueRange> tOffsVec, tSizesVec;
-
-        builder.setInsertionPoint(_rpops.front());
-        auto team = createTeamOf(base->getLoc(), builder, base->getResult(0));
-        auto nProcs = createNProcs(base->getLoc(), builder, team);
-        auto pRank = createPRank(base->getLoc(), builder, team);
-
-        for (unsigned i = 0; i < _extracts.size(); ++i) {
-          auto e = _extracts[i];
-          auto o = _rpops[i];
-          auto loc = e.getLoc();
-
-          // FIXME we use default partitioning here, we should back-propagate
-          ::mlir::ValueRange tOffs = o.getTargetOffsets();
-          ::mlir::ValueRange tSizes = o.getTargetSizes();
-          if (tSizes.size() == 0) {
-            auto lPart = builder.create<::imex::dist::LocalPartitionOp>(
-                loc, nProcs, pRank, e.getSizes());
-            tOffs = lPart.getLOffsets();
-            tSizes = lPart.getLShape();
-          }
-          tOffsVec.emplace_back(tOffs);
-          tSizesVec.emplace_back(tSizes);
-
-          ::mlir::ValueRange offs, szs;
-          if (i > 0) {
-            if (i == 1) {
-              offs = tOffsVec[0];
-              szs = tSizesVec[0];
-            } else {
-              offs = bbox.getResultOffsets();
-              szs = bbox.getResultSizes();
-            }
-            // extend local bounding box
-            bbox = builder.create<::imex::dist::LocalBoundingBoxOp>(
-                loc, base->getResult(0), e.getOffsets(), e.getSizes(),
-                e.getStrides(), tOffs, tSizes, offs, szs);
-          }
-        }
-
-        auto combined =
-            createRePartition(base->getLoc(), builder, base->getResult(0),
-                              bbox.getResultOffsets(), bbox.getResultSizes());
-
-        // finally update all related extractslice ops
-        for (unsigned i = 0; i < _extracts.size(); ++i) {
-          auto e = _extracts[i];
-          auto o = _rpops[i];
-          auto tOffs = tOffsVec[i];
-          auto tSizes = tSizesVec[i];
-          // right now we support only balanced target partitions
-          assert(e.getTargetOffsets().empty() && e.getTargetSizes().empty());
-
-          // replace repartition with new extractslice
-          auto nES = builder.create<::imex::dist::ExtractSliceOp>(
-              e.getLoc(), o.getResult().getType(), combined, e.getOffsets(),
-              e.getSizes(), e.getStrides(), tOffs, tSizes);
-          o->replaceAllUsesWith(::mlir::ValueRange{nES.getResult()});
-
-          // replace all extract uses as well
-          // FIXME: uses of orig extractslice might be before first repartition
-          //        we'll get a compiler error in that case
-          e->replaceAllUsesWith(::mlir::ValueRange{nES.getResult()});
-        }
-
-        for (auto o : _rpops) {
-          o->erase();
-        }
-        for (auto o : _extracts) {
-          o->erase();
-        }
-      }
-    }
-  }
-};
-#endif
 
 } // namespace
 } // namespace dist
