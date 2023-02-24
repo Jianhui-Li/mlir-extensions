@@ -67,9 +67,8 @@ struct DistCoalescePass : public ::imex::DistCoalesceBase<DistCoalescePass> {
       return false;
   }
 
-  using rb_info =
-      ::std::pair<::mlir::Operation *,
-                  ::mlir::SmallVector<::imex::dist::ExtractSliceOp>>;
+  using rb_info = ::std::pair<::mlir::Operation *,
+                              ::mlir::SmallVector<::imex::dist::SubviewOp>>;
 
   ::mlir::Operation *getBase(const ::mlir::Value &val) {
     if (auto op = val.getDefiningOp<::imex::dist::InitDistTensorOp>()) {
@@ -82,7 +81,7 @@ struct DistCoalescePass : public ::imex::DistCoalesceBase<DistCoalescePass> {
       return getBase(pt);
     } else if (auto op = val.getDefiningOp<::imex::ptensor::EWBinOp>()) {
       return op;
-    } else if (auto op = val.getDefiningOp<::imex::dist::ExtractSliceOp>()) {
+    } else if (auto op = val.getDefiningOp<::imex::dist::SubviewOp>()) {
       return getBase(op.getSource());
     } else if (auto op = val.getDefiningOp<::imex::dist::InsertSliceOp>()) {
       return getBase(op.getDestination());
@@ -103,7 +102,7 @@ struct DistCoalescePass : public ::imex::DistCoalesceBase<DistCoalescePass> {
   }
 
   ::mlir::Operation *updateTargetPart(::mlir::IRRewriter &builder,
-                                      ::imex::dist::ExtractSliceOp op,
+                                      ::imex::dist::SubviewOp op,
                                       const ::mlir::ValueRange &tOffs,
                                       const ::mlir::ValueRange &tSizes) {
 
@@ -186,7 +185,7 @@ struct DistCoalescePass : public ::imex::DistCoalesceBase<DistCoalescePass> {
   // if meeting a supported op, recursively gets defining ops and back
   // propagates as it follows only supported ops, all other ops act as
   // propagation barriers (e.g. insertsliceops) on the way it updates target
-  // info on extractsliceops and marks repartitionops for elimination
+  // info on subviewops and marks repartitionops for elimination
   uint64_t backPropagatePart(
       ::mlir::IRRewriter &builder, ::mlir::Operation *op,
       const ::mlir::ValueRange &tOffs, const ::mlir::ValueRange &tSizes,
@@ -195,7 +194,7 @@ struct DistCoalescePass : public ::imex::DistCoalesceBase<DistCoalescePass> {
     ::mlir::Value val;
     uint64_t n = 0;
     nOp = nullptr;
-    if (auto typedOp = ::mlir::dyn_cast<::imex::dist::ExtractSliceOp>(op)) {
+    if (auto typedOp = ::mlir::dyn_cast<::imex::dist::SubviewOp>(op)) {
       val = typedOp.getSource();
       updateTargetPart(builder, typedOp, tOffs, tSizes);
     } else if (auto typedOp =
@@ -221,16 +220,16 @@ struct DistCoalescePass : public ::imex::DistCoalesceBase<DistCoalescePass> {
   }
 
   // This pass tries to combine multiple repartitionops into one.
-  // Dependent operations (like extractsliceop) get adequately annotated.
+  // Dependent operations (like subviewop) get adequately annotated.
   //
   // The basic idea is to compute a the bounding box of several repartitionops
-  // and use it for a single repartition. Dependent extractsliceops can then
+  // and use it for a single repartition. Dependent subviewops can then
   // extract the appropriate part from that bounding box without further
   // communication/repartitioning.
   //
   // 1. back-propagation of explicit target-parts
-  // 2. group and move extractsliceops
-  // 3. create base repartitionops and update dependent extractsliceops
+  // 2. group and move subviewops
+  // 3. create base repartitionops and update dependent subviewops
   void runOnOperation() override {
 
     auto root = this->getOperation();
@@ -262,7 +261,7 @@ struct DistCoalescePass : public ::imex::DistCoalesceBase<DistCoalescePass> {
       builder.replaceOp(rp, rp.getBase());
     }
 
-    // find insertslice, extractslice and repartition ops on the same base
+    // find insertslice, subview and repartition ops on the same base
     // pointer
     // opsGroups holds independent partial operation sequences operating on a
     // specific base pointer
@@ -274,8 +273,7 @@ struct DistCoalescePass : public ::imex::DistCoalesceBase<DistCoalescePass> {
       ::mlir::Value val;
       if (auto typedOp = ::mlir::dyn_cast<::imex::dist::InsertSliceOp>(op)) {
         val = typedOp.getDestination();
-      } else if (auto typedOp =
-                     ::mlir::dyn_cast<::imex::dist::ExtractSliceOp>(op)) {
+      } else if (auto typedOp = ::mlir::dyn_cast<::imex::dist::SubviewOp>(op)) {
         val = typedOp.getSource();
       } else if (auto typedOp =
                      ::mlir::dyn_cast<::imex::dist::RePartitionOp>(op)) {
@@ -312,13 +310,13 @@ struct DistCoalescePass : public ::imex::DistCoalesceBase<DistCoalescePass> {
             break;
           }
           grp.emplace_back(*i);
-          if (::mlir::dyn_cast<::imex::dist::ExtractSliceOp>(*i)) {
+          if (::mlir::dyn_cast<::imex::dist::SubviewOp>(*i)) {
             ++nEx;
           }
         }
 
         // iterate over group until all ops are handled
-        // we might not be able to move all extractsliceops to the point which
+        // we might not be able to move all subviewops to the point which
         // is early enough to have a single repartition. Hence we have to loop
         // until we handled all sub-groups.
         while (grp.size() > 1) {
@@ -332,7 +330,7 @@ struct DistCoalescePass : public ::imex::DistCoalesceBase<DistCoalescePass> {
 
           // iterate group
           for (auto i = grp.begin(); i != grp.end(); ++i) {
-            auto e = ::mlir::dyn_cast<::imex::dist::ExtractSliceOp>(*i);
+            auto e = ::mlir::dyn_cast<::imex::dist::SubviewOp>(*i);
             auto rp = ::mlir::dyn_cast<::imex::dist::RePartitionOp>(*i);
             // check if we can move current op up
             if (dom.dominates(fOp, *i)) {

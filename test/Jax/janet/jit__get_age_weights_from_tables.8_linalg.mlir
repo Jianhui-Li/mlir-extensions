@@ -51,7 +51,7 @@ module @jit__get_age_weights_from_tables.8 {
     return %12 : tensor<94xf32>
   }
   func.func private @interp.145(%arg0: tensor<95xf32>, %arg1: tensor<50000xf32>, %arg2: tensor<50000xf32>) -> tensor<95xf32> {
-    %0 = tensor.extract_slice %arg1[49999] [1] [1] : tensor<50000xf32> to tensor<1xf32>
+    %0 = tensor.subview %arg1[49999] [1] [1] : tensor<50000xf32> to tensor<1xf32>
     %1 = tensor.collapse_shape %0 [] : tensor<1xf32> into tensor<f32>
     %2 = tensor.empty() : tensor<95xf32>
     %3 = linalg.generic {indexing_maps = [#map1, #map0], iterator_types = ["parallel"]} ins(%1 : tensor<f32>) outs(%2 : tensor<95xf32>) {
@@ -64,9 +64,9 @@ module @jit__get_age_weights_from_tables.8 {
       %106 = arith.cmpf ogt, %arg3, %arg4 : f32
       linalg.yield %106 : i1
     } -> tensor<95xi1>
-    %6 = tensor.extract_slice %arg2[49999] [1] [1] : tensor<50000xf32> to tensor<1xf32>
+    %6 = tensor.subview %arg2[49999] [1] [1] : tensor<50000xf32> to tensor<1xf32>
     %7 = tensor.collapse_shape %6 [] : tensor<1xf32> into tensor<f32>
-    %8 = tensor.extract_slice %arg1[0] [1] [1] : tensor<50000xf32> to tensor<1xf32>
+    %8 = tensor.subview %arg1[0] [1] [1] : tensor<50000xf32> to tensor<1xf32>
     %9 = tensor.collapse_shape %8 [] : tensor<1xf32> into tensor<f32>
     %10 = tensor.empty() : tensor<95xf32>
     %11 = linalg.generic {indexing_maps = [#map1, #map0], iterator_types = ["parallel"]} ins(%9 : tensor<f32>) outs(%10 : tensor<95xf32>) {
@@ -79,7 +79,7 @@ module @jit__get_age_weights_from_tables.8 {
       %106 = arith.cmpf olt, %arg3, %arg4 : f32
       linalg.yield %106 : i1
     } -> tensor<95xi1>
-    %14 = tensor.extract_slice %arg2[0] [1] [1] : tensor<50000xf32> to tensor<1xf32>
+    %14 = tensor.subview %arg2[0] [1] [1] : tensor<50000xf32> to tensor<1xf32>
     %15 = tensor.collapse_shape %14 [] : tensor<1xf32> into tensor<f32>
     %16 = func.call @searchsorted.104(%arg1, %arg0) : (tensor<50000xf32>, tensor<95xf32>) -> tensor<95xi32>
     %cst = arith.constant dense<1> : tensor<i32>
@@ -758,8 +758,8 @@ module @jit__get_age_weights_from_tables.8 {
     return %3 : tensor<95xf32>
   }
   func.func private @diff.224(%arg0: tensor<95xf32>) -> tensor<94xf32> {
-    %0 = tensor.extract_slice %arg0[1] [94] [1] : tensor<95xf32> to tensor<94xf32>
-    %1 = tensor.extract_slice %arg0[0] [94] [1] : tensor<95xf32> to tensor<94xf32>
+    %0 = tensor.subview %arg0[1] [94] [1] : tensor<95xf32> to tensor<94xf32>
+    %1 = tensor.subview %arg0[0] [94] [1] : tensor<95xf32> to tensor<94xf32>
     %2 = tensor.empty() : tensor<94xf32>
     %3 = linalg.generic {indexing_maps = [#map0, #map0, #map0], iterator_types = ["parallel"]} ins(%0, %1 : tensor<94xf32>, tensor<94xf32>) outs(%2 : tensor<94xf32>) {
     ^bb0(%arg1: f32, %arg2: f32, %arg3: f32):

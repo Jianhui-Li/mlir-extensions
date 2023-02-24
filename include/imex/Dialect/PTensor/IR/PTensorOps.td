@@ -19,6 +19,12 @@ include "mlir/IR/OpBase.td"
 include "mlir/IR/AttrTypeBase.td"
 include "mlir/Interfaces/SideEffectInterfaces.td"
 include "mlir/Interfaces/ViewLikeInterface.td"
+include "mlir/IR/BuiltinTypeInterfaces.td"
+include "mlir/IR/SubElementInterfaces.td"
+include "mlir/Interfaces/InferTypeOpInterface.td"
+include "mlir/Interfaces/ViewLikeInterface.td"
+include "mlir/Interfaces/ShapedOpInterfaces.td"
+include "mlir/IR/OpAsmInterface.td"
 
 // Provide a definition of the 'PTensor' dialect in the ODS framework so that we
 // can define our operations.
@@ -52,28 +58,72 @@ def PTensor_Dialect : Dialect {
 }
 
 // common base classes for types in PTensor dialect
-class PTensor_Type<string name, string typeMnemonic, list<Trait> traits = []>
-  : TypeDef<PTensor_Dialect, name, traits> {
-    let mnemonic = typeMnemonic;
+class PTensor_Type<string name, string typeMnemonic, list<Trait> traits = [],
+                   string baseCppClass = "::mlir::Type">
+    : TypeDef<PTensor_Dialect, name, traits, baseCppClass> {
+  let mnemonic = typeMnemonic;
 }
 
-def PTensor_PTensor : PTensor_Type<"PTensor", "ptensor">
-{
-  let summary = "RankedTensor, optionally annoted with device info";
+def PTensor_PTensor : PTensor_Type<"PTensor", "ptensor", [
+  DeclareTypeInterfaceMethods<SubElementTypeInterface>, ShapedTypeInterface],
+  "::imex::ptensor::PTensorBase"> {
+  let summary = "Multi-dimensional numpy-like array";
   let description = [{
-    The ptensor type represents a tensor to applied to and created by operations in
-    the PTensor dialect. Every PTensor is expected to be created by MkPTensorOp,
-    either explicitly or implicitly by creation operations in the PTensor dialect.
+    Multi-dimensional numpy-like array.
+
+    Contrary to upstream tensor type is has a reference semantics and allow to
+    modify data inplace.
+
+    Has optional `environment` attribute, which specifies additional environment
+    information for computations on this tensor (e.g. it computation must run on
+    specific GPU device).
+
+    TBD
   }];
-  // Here we define the underlying Tensor
-  let parameters = (ins "int64_t":$rank,
-                        "::mlir::Type":$element_type,
-                        DefaultValuedParameter<"bool", "false">:$onDevice);
-  let assemblyFormat = "`<` $rank `x` $element_type (`,` $onDevice^)? `>`";
+  let parameters = (ins
+    ArrayRefParameter<"int64_t">:$shape,
+    "::mlir::Type":$elementType,
+    OptionalParameter<"::mlir::Attribute">:$environment,
+    OptionalParameter<"::mlir::StringAttr">:$layout
+  );
+
+  let builders = [
+    TypeBuilderWithInferredContext<(ins
+      "::llvm::ArrayRef<int64_t>":$shape,
+      "::mlir::Type":$elementType,
+      CArg<"::mlir::Attribute", "{}">:$environment,
+      CArg<"::llvm::Optional<::llvm::StringRef>", "std::nullopt">:$layout
+    ), [{
+      auto ctx = elementType.getContext();
+      auto l = layout ? ::mlir::StringAttr::get(ctx, *layout) : ::mlir::StringAttr{};
+      return $_get(ctx, shape, elementType, environment, l);
+    }]>,
+    TypeBuilderWithInferredContext<(ins
+      "::llvm::ArrayRef<int64_t>":$shape,
+      "::mlir::Type":$elementType,
+      "::mlir::Attribute":$environment,
+      "::mlir::StringAttr":$layout
+    ), [{
+      auto ctx = elementType.getContext();
+      return $_get(ctx, shape, elementType, environment, layout);
+    }]>
+  ];
+
   let extraClassDeclaration = [{
     ::mlir::MemRefType getMemRefType();
     ::mlir::RankedTensorType getTensorType();
+    using ::mlir::ShapedType::Trait<PTensorType>::clone;
+    using ::mlir::ShapedType::Trait<PTensorType>::getElementTypeBitWidth;
+    using ::mlir::ShapedType::Trait<PTensorType>::getRank;
+    using ::mlir::ShapedType::Trait<PTensorType>::getNumElements;
+    using ::mlir::ShapedType::Trait<PTensorType>::isDynamicDim;
+    using ::mlir::ShapedType::Trait<PTensorType>::hasStaticShape;
+    using ::mlir::ShapedType::Trait<PTensorType>::getNumDynamicDims;
+    using ::mlir::ShapedType::Trait<PTensorType>::getDimSize;
+    using ::mlir::ShapedType::Trait<PTensorType>::getDynamicDimIndex;
   }];
+
+  let assemblyFormat = "`<` custom<Shape>($shape, $elementType) (`:` $layout^)? (`,` $environment^)? `>`";
 }
 
 // Base class for dialect operations. This operation inherits from the base
@@ -104,10 +154,8 @@ def MkPTensorOp : PTensor_Op<"init_ptensor", []> {
         $_state.addOperands({mem_ref, device});
         auto mr = mem_ref.getType().dyn_cast<::mlir::MemRefType>();
         $_state.addTypes(::imex::ptensor::PTensorType::get(
-            $_state.getContext(),
-            mr.getShape().size(),
-            mr.getElementType(),
-            onDevice));
+            mr.getShape(),
+            mr.getElementType())); // FIXME device
       }]>,
       // Default: no device
       OpBuilder<(ins "::mlir::Value":$mem_ref), [{
@@ -115,11 +163,8 @@ def MkPTensorOp : PTensor_Op<"init_ptensor", []> {
         $_state.addOperands({mem_ref, dmy});
         auto mr = mem_ref.getType().dyn_cast<::mlir::MemRefType>();
         $_state.addTypes(::imex::ptensor::PTensorType::get(
-            $_state.getContext(),
             mr.getShape().size(),
-            mr.getElementType(),
-            false)
-        );
+            mr.getElementType()));
       }]>,
     ];
 }
@@ -144,27 +189,228 @@ def ExtractMemRefOp : PTensor_Op<"extract_tensor", []> {
     ];
 }
 
-def ExtractSliceOp : PTensor_Op<"extract_slice", [SameVariadicOperandSize, Pure]> {
-  let summary = "extract slice operation";
+def DimOp : PTensor_Op<"dim", [
+    DeclareOpInterfaceMethods<OpAsmOpInterface, ["getAsmResultNames"]>,
+    ConditionallySpeculatable, NoMemoryEffect,
+    ShapedDimOpInterface]> {
+  let summary = "dimension index operation";
   let description = [{
-    The "extract_slice" operation extract a tensor from another tensor as
-    specified by the operation's offsets, sizes and strides arguments.
+    The `dim` operation takes a array and a dimension operand of type `index`.
+    It returns the size of the requested dimension of the given array.
+    If the dimension index is out of bounds the behavior is undefined.
+  }];
 
-    The extract_slice operation is a shallow wrapper around tensor.extract_slice.
+  let arguments = (ins PTensor_PTensor:$source,
+                       Index:$index);
+  let results = (outs Index:$result);
+
+  let assemblyFormat = [{
+    attr-dict $source `,` $index `:` qualified(type($source))
+  }];
+
+  let builders = [
+    OpBuilder<(ins "::mlir::Value":$source, "int64_t":$index)>,
+  ];
+
+  let extraClassDeclaration = [{
+    /// Helper function to get the index as a simple integer if it is constant.
+    ::llvm::Optional<int64_t> getConstantIndex();
+
+    /// Interface method of ShapedDimOpInterface: Return the source tensor.
+    ::mlir::Value getShapedValue() { return getSource(); }
+
+    /// Interface method of ShapedDimOpInterface: Return the dimension.
+    ::mlir::OpFoldResult getDimension() { return getIndex(); }
+
+    /// Interface method for ConditionallySpeculatable.
+    ::mlir::Speculation::Speculatability getSpeculatability();
+  }];
+
+  let hasVerifier = 1;
+  // let hasFolder = 1;
+  let hasCanonicalizer = 1;
+}
+
+// Base class for ops with static/dynamic offset, sizes and strides
+// attributes/arguments.
+class PTensor_OpWithOffsetSizesAndStrides<string mnemonic,
+                                          list<Trait> traits = []>
+    : PTensor_Op<mnemonic, traits> {
+  code extraBaseClassDeclaration = [{
+    /// Returns the dynamic sizes for this subview operation if specified.
+    ::mlir::Operation::operand_range getDynamicSizes() { return getSizes(); }
+
+    /// Return the list of Range (i.e. offset, size, stride). Each
+    /// Range entry contains either the dynamic value or a ConstantIndexOp
+    /// constructed with `b` at location `loc`.
+    ::mlir::SmallVector<::mlir::Range, 8> getOrCreateRanges(
+        ::mlir::OpBuilder &b, ::mlir::Location loc) {
+      return ::mlir::getOrCreateRanges(*this, b, loc);
+    }
+  }];
+}
+
+def SubviewOp : PTensor_OpWithOffsetSizesAndStrides<"subview", [
+    Pure, AttrSizedOperandSegments,
+    DeclareOpInterfaceMethods<ReifyRankedShapedTypeOpInterface>,
+    OffsetSizeAndStrideOpInterface,
+    ViewLikeOpInterface
+  ]> {
+  let summary = "array subview operation";
+  let description = [{
+    The "subview" operation converts a array type to another array type
+    which represents a reduced-size view of the original array as specified by
+    the operation's offsets, sizes and strides arguments.
   }];
 
   let arguments = (ins
-    AnyType:$source,
+    PTensor_PTensor:$source,
     Variadic<Index>:$offsets,
     Variadic<Index>:$sizes,
-    Variadic<Index>:$strides
+    Variadic<Index>:$strides,
+    DenseI64ArrayAttr:$static_offsets,
+    DenseI64ArrayAttr:$static_sizes,
+    DenseI64ArrayAttr:$static_strides
   );
-  let results = (outs AnyType:$result);
+  let results = (outs PTensor_PTensor:$result);
 
   let assemblyFormat = [{
-    $source `[` $offsets `]``[` $sizes `]``[` $strides `]` attr-dict `:` qualified(type($source)) `to` qualified(type($result))
+    $source ``
+    custom<DynamicIndexList>($offsets, $static_offsets)
+    custom<DynamicIndexList>($sizes, $static_sizes)
+    custom<DynamicIndexList>($strides, $static_strides)
+    attr-dict `:` qualified(type($source)) `to` qualified(type($result))
   }];
+
+  let builders = [
+    // Build a SubViewOp with mixed static and dynamic entries and custom
+    // result type. If the type passed is nullptr, it is inferred.
+    OpBuilder<(ins
+      "::mlir::Value":$source,
+      "::mlir::ArrayRef<::mlir::OpFoldResult>":$offsets,
+      "::mlir::ArrayRef<::mlir::OpFoldResult>":$sizes,
+      "::mlir::ArrayRef<::mlir::OpFoldResult>":$strides,
+      CArg<"::mlir::ArrayRef<::mlir::NamedAttribute>", "{}">:$attrs)>,
+
+    // Build a SubViewOp with mixed static and dynamic entries and inferred
+    // result type.
+    OpBuilder<(ins
+      "PTensorType":$resultType,
+      "::mlir::Value":$source,
+      "::mlir::ArrayRef<::mlir::OpFoldResult>":$offsets,
+      "::mlir::ArrayRef<::mlir::OpFoldResult>":$sizes,
+      "::mlir::ArrayRef<::mlir::OpFoldResult>":$strides,
+      CArg<"::mlir::ArrayRef<::mlir::NamedAttribute>", "{}">:$attrs)>,
+
+    // Build a SubViewOp with static entries and custom result type. If the
+    // type passed is nullptr, it is inferred.
+    OpBuilder<(ins
+      "::mlir::Value":$source,
+      "::mlir::ArrayRef<int64_t>":$offsets,
+      "::mlir::ArrayRef<int64_t>":$sizes,
+      "::mlir::ArrayRef<int64_t>":$strides,
+      CArg<"::mlir::ArrayRef<::mlir::NamedAttribute>", "{}">:$attrs)>,
+
+    // Build a SubViewOp with static entries and inferred result type.
+    OpBuilder<(ins
+      "PTensorType":$resultType,
+      "::mlir::Value":$source,
+      "::mlir::ArrayRef<int64_t>":$offsets,
+      "::mlir::ArrayRef<int64_t>":$sizes,
+      "::mlir::ArrayRef<int64_t>":$strides,
+      CArg<"::mlir::ArrayRef<::mlir::NamedAttribute>", "{}">:$attrs)>,
+
+    // Build a SubViewOp with dynamic entries and custom result type. If the
+    // type passed is nullptr, it is inferred.
+    OpBuilder<(ins
+      "::mlir::Value":$source,
+      "::mlir::ValueRange":$offsets,
+      "::mlir::ValueRange":$sizes,
+      "::mlir::ValueRange":$strides,
+      CArg<"::mlir::ArrayRef<::mlir::NamedAttribute>", "{}">:$attrs)>,
+
+    // Build a SubViewOp with dynamic entries and inferred result type.
+    OpBuilder<(ins
+      "PTensorType":$resultType,
+      "::mlir::Value":$source,
+      "::mlir::ValueRange":$offsets,
+      "::mlir::ValueRange":$sizes,
+      "::mlir::ValueRange":$strides,
+      CArg<"::mlir::ArrayRef<::mlir::NamedAttribute>", "{}">:$attrs)>
+  ];
+
+  let extraClassDeclaration = extraBaseClassDeclaration # [{
+    /// Returns the type of the base tensor operand.
+    PTensorType getSourceType() {
+      return getSource().getType().cast<PTensorType>();
+    }
+
+    /// The result of an subview is always a tensor.
+    PTensorType getType() {
+      return getResult().getType().cast<PTensorType>();
+    }
+
+    /// Compute the rank-reduction mask that can be applied to map the source
+    /// tensor type to the result tensor type by dropping unit dims.
+    llvm::Optional<llvm::SmallDenseSet<unsigned>>
+    computeRankReductionMask() {
+      return ::mlir::computeRankReductionMask(getSourceType().getShape(),
+                                              getType().getShape());
+    };
+
+    /// An subview result type can be inferred, when it is not
+    /// rank-reduced, from the source type and the static representation of
+    /// offsets, sizes and strides. Special sentinels encode the dynamic case.
+    static PTensorType inferResultType(
+      PTensorType sourceType,
+      ::mlir::ArrayRef<int64_t> staticOffsets,
+      ::mlir::ArrayRef<int64_t> staticSizes,
+      ::mlir::ArrayRef<int64_t> staticStrides);
+    static PTensorType inferResultType(
+      PTensorType sourceType,
+      ::mlir::ArrayRef<::mlir::OpFoldResult> staticOffsets,
+      ::mlir::ArrayRef<::mlir::OpFoldResult> staticSizes,
+      ::mlir::ArrayRef<::mlir::OpFoldResult> staticStrides);
+
+    /// A rank-reducing result type can be inferred from the desired result
+    /// shape. Only the layout map is inferred.
+    ///
+    /// Note: The result shape cannot be inferred with just the result rank and
+    /// and the desired sizes. In case there are more "ones" among the sizes
+    /// than the difference in source/result rank, it is not clear which dims of
+    /// size one should be dropped.
+    static PTensorType inferRankReducedResultType(::mlir::ArrayRef<int64_t> resultShape,
+                                                  PTensorType sourceType,
+                                                  ::mlir::ArrayRef<int64_t> staticOffsets,
+                                                  ::mlir::ArrayRef<int64_t> staticSizes,
+                                                  ::mlir::ArrayRef<int64_t> staticStrides);
+    static PTensorType inferRankReducedResultType(::mlir::ArrayRef<int64_t> resultShape,
+                                                  PTensorType sourceType,
+                                                  ::mlir::ArrayRef<::mlir::OpFoldResult> staticOffsets,
+                                                  ::mlir::ArrayRef<::mlir::OpFoldResult> staticSizes,
+                                                  ::mlir::ArrayRef<::mlir::OpFoldResult> staticStrides);
+
+    /// Return the expected rank of each of the`static_offsets`, `static_sizes`
+    /// and `static_strides` attributes.
+    std::array<unsigned, 3> getArrayAttrMaxRanks() {
+      unsigned rank = getSourceType().getRank();
+      return {rank, rank, rank};
+    }
+
+    /// Return the number of leading operands before the `offsets`, `sizes` and
+    /// and `strides` operands.
+    static unsigned getOffsetSizeAndStrideStartOperandIndex() { return 1; }
+
+    /// Return the dimensions of the source that are dropped in the
+    /// result when the result is rank-reduced.
+    ::llvm::SmallBitVector getDroppedDims();
+
+    ::mlir::Value getViewSource() { return getSource(); }
+  }];
+
+  // let hasFolder = 1;
 }
+
 
 def InsertSliceOp : PTensor_Op<"insert_slice", [SameVariadicOperandSize]> {
   let summary = "Copy values from a tensor into a slice of another.";
@@ -205,9 +451,10 @@ def ARangeOp : PTensor_Op<"arange", [AttrSizedOperandSegments]> {
     let builders = [
         // auto-deduce return type
         OpBuilder<(ins "::mlir::Value":$start, "::mlir::Value":$stop, "::mlir::Value":$step, "::mlir::Value":$device, "::mlir::Value":$team), [{
-            build($_builder, $_state, ::imex::ptensor::PTensorType::get(
-                $_state.getContext(), 1, $_builder.getI64Type(), device ? true : false),
-                start, stop, step, device, team);
+            build($_builder, $_state,
+                  ::imex::ptensor::PTensorType::get({::mlir::ShapedType::kDynamic},
+                                                    $_builder.getI64Type()), // FIXME device
+                  start, stop, step, device, team);
         }]>,
     ];
 }
@@ -233,9 +480,9 @@ def CreateOp : PTensor_Op<"create", [AttrSizedOperandSegments]> {
         // auto-deduce return type
         OpBuilder<(ins "::mlir::ValueRange":$shape, "::imex::ptensor::DType":$dtype, "::mlir::Value":$value, "::mlir::Value":$device, "::mlir::Value":$team), [{
             auto dt = toMLIR($_builder, dtype);
-            build($_builder, $_state, ::imex::ptensor::PTensorType::get(
-                $_state.getContext(), shape.size(), dt, device ? true : false),
-                shape, $_builder.getI8IntegerAttr(dtype), value, device, team);
+            build($_builder, $_state,
+                  ::imex::ptensor::PTensorType::get(getShapeFromValues(shape), dt), // FIXME device
+                  shape, $_builder.getI8IntegerAttr(dtype), value, device, team);
         }]>,
     ];
 

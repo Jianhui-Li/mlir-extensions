@@ -367,8 +367,7 @@ struct DistReductionOpRWP
     auto local = createLocalTensorOf(loc, rewriter, op.getInput());
     // return type 0d with same dtype as input
     auto dtype = inpDtTyp.getPTensorType().getElementType();
-    auto retPtTyp = ::imex::ptensor::PTensorType::get(rewriter.getContext(), 0,
-                                                      dtype, false);
+    auto retPtTyp = ::imex::ptensor::PTensorType::get({}, dtype);
     auto redPTnsr = rewriter.create<::imex::ptensor::ReductionOp>(
         loc, retPtTyp, op.getOp(), local);
     // global reduction

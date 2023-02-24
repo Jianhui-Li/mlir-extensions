@@ -1,13 +1,13 @@
 // RUN: imex-opt --split-input-file --convert-ptensor-to-linalg %s -verify-diagnostics -o -| FileCheck %s
 
 // -----
-func.func @test_extract_slice(%arg0: !ptensor.ptensor<1 x i64>) -> !ptensor.ptensor<1 x i64> {
+func.func @test_subview(%arg0: !ptensor.ptensor<1 x i64>) -> !ptensor.ptensor<1 x i64> {
     %c0 = arith.constant 0 : index
     %c3 = arith.constant 3 : index
-    %0 = ptensor.extract_slice %arg0[%c0][%c3][%c3] : !ptensor.ptensor<1 x i64> to !ptensor.ptensor<1 x i64>
+    %0 = ptensor.subview %arg0[%c0][%c3][%c3] : !ptensor.ptensor<1 x i64> to !ptensor.ptensor<1 x i64>
     return %0 : !ptensor.ptensor<1 x i64>
 }
-// CHECK-LABEL: @test_extract_slice
+// CHECK-LABEL: @test_subview
 // CHECK-NEXT: [[C0:%.*]] = arith.constant
 // CHECK-NEXT: [[C1:%.*]] = arith.constant
 // CHECK-NEXT: [[V0:%.*]] = memref.subview %arg0[[[C0]]] [[[C1]]] [[[C1]]] : memref<?xi64, strided<[?], offset: ?>> to memref<?xi64, strided<[?], offset: ?>>

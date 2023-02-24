@@ -36,22 +36,68 @@ void PTensorDialect::initialize() {
 } // namespace ptensor
 } // namespace imex
 
+namespace imex {
+namespace ptensor {
+
+::mlir::MemRefType PTensorType::getMemRefType() {
+  return ::imex::getMemRefType(getContext(), getShape(), getElementType());
+}
+
+::mlir::RankedTensorType PTensorType::getTensorType() {
+  return ::imex::getTensorType(getContext(), getShape(), getElementType());
+}
+
+} // namespace ptensor
+} // namespace imex
+
+bool imex::ptensor::PTensorBase::hasRank() const { return true; }
+
+llvm::ArrayRef<int64_t> imex::ptensor::PTensorBase::getShape() const {
+  return cast<PTensorType>().getShape();
+}
+
+imex::ptensor::PTensorBase imex::ptensor::PTensorBase::cloneWith(
+    llvm::Optional<llvm::ArrayRef<int64_t>> shape, Type elementType) const {
+  auto t = cast<PTensorType>();
+  return PTensorType::get(shape.value_or(getShape()), elementType,
+                          t.getEnvironment(), t.getLayout());
+}
+
+bool imex::ptensor::PTensorBase::isValidElementType(Type type) {
+  return type.isIntOrIndexOrFloat();
+}
+
+static mlir::LogicalResult
+parseShape(mlir::AsmParser &parser,
+           mlir::FailureOr<llvm::SmallVector<int64_t>> &shape,
+           mlir::FailureOr<mlir::Type> &type) {
+  llvm::SmallVector<int64_t> dimensions;
+  if (parser.parseDimensionList(dimensions))
+    return mlir::failure();
+
+  mlir::Type t;
+  if (parser.parseType(t))
+    return mlir::failure();
+
+  shape = std::move(dimensions);
+  type = std::move(t);
+  return mlir::success();
+}
+
+static void printShape(mlir::AsmPrinter &printer, llvm::ArrayRef<int64_t> shape,
+                       mlir::Type type) {
+  for (int64_t dim : shape) {
+    if (mlir::ShapedType::isDynamic(dim))
+      printer << '?';
+    else
+      printer << dim;
+    printer << 'x';
+  }
+  printer << type;
+}
+
 #include <imex/Dialect/PTensor/IR/PTensorOpsDialect.cpp.inc>
 #define GET_TYPEDEF_CLASSES
 #include <imex/Dialect/PTensor/IR/PTensorOpsTypes.cpp.inc>
 #define GET_OP_CLASSES
 #include <imex/Dialect/PTensor/IR/PTensorOps.cpp.inc>
-
-namespace imex {
-namespace ptensor {
-
-::mlir::MemRefType PTensorType::getMemRefType() {
-  return ::imex::getMemRefType(getContext(), getRank(), getElementType());
-}
-
-::mlir::RankedTensorType PTensorType::getTensorType() {
-  return ::imex::getTensorType(getContext(), getRank(), getElementType());
-}
-
-} // namespace ptensor
-} // namespace imex

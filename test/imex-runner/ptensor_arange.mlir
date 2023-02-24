@@ -28,7 +28,7 @@ module {
         // _CHECK-SAME: rank = 1 offset = 0 sizes = [5] strides = [1] data =
         // _CHECK-NEXT: [0,  2,  4,  6,  8]
 
-        %20 = ptensor.extract_slice %3[%i1][%i2][%i2] : !ptensor.ptensor<1 x i64> to !ptensor.ptensor<1 x i64>
+        %20 = ptensor.subview %3[%i1][%i2][%i2] : !ptensor.ptensor<1 x i64> to !ptensor.ptensor<1 x i64>
         %21 = builtin.unrealized_conversion_cast %20 : !ptensor.ptensor<1 x i64> to memref<?xi64>
         %22 = bufferization.to_tensor %21 : memref<?xi64>
         %23 = tensor.cast %22 : tensor<?xi64> to tensor<*xi64>

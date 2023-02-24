@@ -135,7 +135,7 @@ inline bool hasWriteBetween(::mlir::Operation *a, ::mlir::Operation *b,
     auto rhs = op.getRhs().getDefiningOp();
     return (lhs && hasWriteBetween(a, lhs, dom)) ||
            (rhs && hasWriteBetween(a, rhs, dom));
-  } else if (auto op = ::mlir::dyn_cast<::imex::dist::ExtractSliceOp>(b)) {
+  } else if (auto op = ::mlir::dyn_cast<::imex::dist::SubviewOp>(b)) {
     auto dop = op.getSource().getDefiningOp();
     return dop && hasWriteBetween(a, dop, dom);
   } else {

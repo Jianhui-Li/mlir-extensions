@@ -354,16 +354,16 @@ def AllReduceOp : Dist_Op<"allreduce", []> {
 }
 
 // ============================================================================
-// (Extended) operations from PTEnsor
+// (Extended) operations from PTensor
 // ============================================================================
 
-def ExtractSliceOp : Dist_Op<"extract_slice", [AttrSizedOperandSegments, Pure]> {
+def SubviewOp : Dist_Op<"subview", [AttrSizedOperandSegments, Pure]> {
     let summary = "distributed extract slice operation";
     let description = [{
-        The "extract_slice" operation extract a tensor from another tensor as
+        The "subview" operation extract a tensor from another tensor as
         specified by the operation's offsets, sizes and strides arguments.
 
-        The distributed extract_slice operation is a shallow wrapper around PTensor.extract_slice
+        The distributed subview operation is a shallow wrapper around PTensor.subview
         and adds offsets and slices for targeted local partition.
     }];
 
