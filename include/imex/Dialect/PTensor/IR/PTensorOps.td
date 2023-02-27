@@ -185,6 +185,37 @@ def InsertSliceOp : PTensor_Op<"insert_slice", [SameVariadicOperandSize]> {
   }];
 }
 
+def LoadOp : PTensor_Op<"load",
+     [TypesMatchWith<"result type matches element type of 'array'",
+                     "array", "result",
+                     "$_self.cast<PTensorType>().getElementType()">]> {
+  let summary = "array element load operation";
+  let description = [{
+    The `load` op reads an element from a array specified by an index list. The
+    output of load is a new value with the same type as the elements of the
+    array. The arity of indices is the rank of the array (i.e., if the array
+    loaded from is of rank 3, then 3 indices are required for the load following
+    the array identifier).
+  }];
+
+  let arguments = (ins AnyType:$array,
+                       Variadic<Index>:$indices);
+  let results = (outs AnyType:$result);
+
+  let builders = [
+    OpBuilder<(ins "::mlir::Value":$array, CArg<"::mlir::ValueRange", "{}">:$indices), [{
+      auto arrayType = array.getType().cast<PTensorType>();
+      $_state.addOperands(array);
+      $_state.addOperands(indices);
+      $_state.types.push_back(arrayType.getElementType());
+    }]>];
+
+  let assemblyFormat = "$array `[` $indices `]` attr-dict `:` qualified(type($array))";
+
+  // let hasFolder = 1;
+  // let hasCanonicalizer = 1;
+}
+
 def ARangeOp : PTensor_Op<"arange", [AttrSizedOperandSegments]> {
     let summary = "Create an arange (see array-API)";
     let description = [{

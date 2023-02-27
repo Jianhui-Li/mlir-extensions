@@ -53,5 +53,10 @@ namespace dist {
     return t.getType().dyn_cast<::imex::ptensor::PTensorType>();
   }
 }
+
+::mlir::Type DistTensorType::getElementType() {
+  return getPTensorType().getElementType();
+}
+
 } // namespace dist
 } // namespace imex

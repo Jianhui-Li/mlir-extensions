@@ -105,6 +105,20 @@ struct ExtractSliceOpConverter
       tSizes = lTarget.getTSizes();
     }
 
+    auto rank = slcSizes.size();
+    ::mlir::SmallVector<::mlir::Value> tmp;
+    for (size_t i = 0; i < rank; ++i) {
+      if (auto cval = ::mlir::getConstantIntValue(slcSizes[i]);
+          cval && cval.value() == 1) {
+        std::cerr << "replacing dim " << i
+                  << " with constant size: " << cval.value() << std::endl;
+        tmp.emplace_back(slcSizes[i]);
+      } else {
+        tmp.emplace_back(tSizes[i]);
+      }
+    }
+    tSizes = tmp;
+
     // Compute local part of slice
     auto lOffs = createLocalOffsetsOf(loc, rewriter, src);
     auto lSlice = rewriter.create<::imex::dist::LocalOffsetForTargetSliceOp>(
@@ -135,6 +149,57 @@ struct ExtractSliceOpConverter
     auto team = createTeamOf(loc, rewriter, src);
     rewriter.replaceOp(op, createDistTensor(loc, rewriter, lView, false,
                                             slcSizes, tOffs, team));
+    return ::mlir::success();
+  }
+};
+
+struct LoadOpConverter
+    : public ::mlir::OpConversionPattern<::imex::dist::LoadOp> {
+  using ::mlir::OpConversionPattern<::imex::dist::LoadOp>::OpConversionPattern;
+
+  /// Initialize the pattern.
+  void initialize() {
+    /// Signal that this pattern safely handles recursive application.
+    setHasBoundedRewriteRecursion();
+  }
+
+  ::mlir::LogicalResult
+  matchAndRewrite(::imex::dist::LoadOp op,
+                  ::imex::dist::LoadOp::Adaptor adaptor,
+                  ::mlir::ConversionPatternRewriter &rewriter) const override {
+    // get input and type
+    auto src = op.getArray();
+    auto inpDTTyp = src.getType().dyn_cast<::imex::dist::DistTensorType>();
+    if (!inpDTTyp) {
+      return ::mlir::failure();
+    }
+
+    auto loc = op.getLoc();
+    // Get the local part of the global slice, team, rank, offsets
+    auto slcOffs = op.getIndices();
+    auto rank = slcOffs.size();
+    auto one = createIndex(loc, rewriter, 1);
+    ::mlir::SmallVector<::mlir::Value> slcSizes(rank, one),
+        slcStrides(rank, one);
+    ::mlir::ValueRange tOffs = op.getTargetOffsets();
+
+    if (tOffs.empty()) {
+      auto lTarget = rewriter.create<::imex::dist::LocalTargetOfSliceOp>(
+          loc, src, slcOffs, slcSizes, slcStrides);
+      tOffs = lTarget.getTOffsets();
+    }
+
+    // Compute local part of slice
+    auto lOffs = createLocalOffsetsOf(loc, rewriter, src);
+    auto lSlice = rewriter.create<::imex::dist::LocalOffsetForTargetSliceOp>(
+        loc, lOffs, tOffs, slcOffs, slcStrides);
+    auto lSlcOffsets = lSlice.getLOffsets();
+
+    // create local view
+    auto lTnsr = createLocalTensorOf(loc, rewriter, src);
+    auto lView = rewriter.replaceOpWithNewOp<::imex::ptensor::LoadOp>(
+        op, op.getResult().getType(), lTnsr, lSlcOffsets);
+
     return ::mlir::success();
   }
 };

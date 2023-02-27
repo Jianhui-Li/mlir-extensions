@@ -58,6 +58,10 @@ def Dist_Tensor : Dist_Type<"DistTensor", "dtensor">
   }];
   let parameters = (ins "::imex::ptensor::PTensorType":$p_tensor_type);
   let assemblyFormat = "`<` $p_tensor_type `>`";
+
+  let extraClassDeclaration = [{
+    ::mlir::Type getElementType();
+  }];
 }
 
 // Base class for dialect operations. This operation inherits from the base
@@ -388,6 +392,37 @@ def ExtractSliceOp : Dist_Op<"extract_slice", [AttrSizedOperandSegments, Pure]> 
             build($_builder, $_state, rtyp, d_tensor, offsets, sizes, strides, {}, {});
         }]>,
     ];
+}
+
+def LoadOp : Dist_Op<"load",
+     [AttrSizedOperandSegments, Pure,
+      TypesMatchWith<"result type matches element type of 'array'",
+                     "array", "result",
+                     "$_self.cast<DistTensorType>().getPTensorType().getElementType()">]> {
+  let summary = "array element load operation";
+  let description = [{
+    The `load` op reads an element from a array specified by an index list. The
+    output of load is a new value with the same type as the elements of the
+    array. The arity of indices is the rank of the array (i.e., if the array
+    loaded from is of rank 3, then 3 indices are required for the load following
+    the array identifier).
+  }];
+
+  let arguments = (ins AnyType:$array,
+                       Variadic<Index>:$indices,
+                       Variadic<Index>:$target_offsets);
+  let results = (outs AnyType:$result);
+
+  let builders = [
+    OpBuilder<(ins "::mlir::Value":$array, CArg<"::mlir::ValueRange", "{}">:$indices), [{
+      auto arrayType = array.getType().cast<DistTensorType>();
+      build($_builder, $_state, arrayType.getElementType(), array, indices, {});
+    }]>];
+
+  let assemblyFormat = "$array `[` $indices `]` attr-dict `:` qualified(type($array)) oilist(`toffs` $target_offsets)";
+
+  // let hasFolder = 1;
+  // let hasCanonicalizer = 1;
 }
 
 

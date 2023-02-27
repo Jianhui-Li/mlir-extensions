@@ -79,6 +79,34 @@ inline ::mlir::Value createIndexCast(const ::mlir::Location &loc,
                    .getResult();
 }
 
+inline ::mlir::SmallVector<int64_t>
+getShapeFromValues(const ::mlir::ValueRange &sizes) {
+  auto rank = sizes.size();
+  ::mlir::SmallVector<int64_t> szVec(rank, ::mlir::ShapedType::kDynamic);
+  for (size_t i = 0; i < rank; ++i) {
+    if (auto cval = ::mlir::getConstantIntValue(sizes[i]);
+        cval && cval.value() == 1) {
+      szVec[i] = cval.value();
+    }
+  }
+  return szVec;
+}
+
+/// get dyn-sized mlir::RankedTensorType for given size values and elType
+inline auto getTensorType(::mlir::MLIRContext *ctxt,
+                          const ::mlir::ValueRange &sizes,
+                          ::mlir::Type elType) {
+  auto shape = getShapeFromValues(sizes);
+  return ::mlir::RankedTensorType::get(shape, elType); //, layout);
+}
+
+/// get dyn-sized mlir::RankedTensorType for given shape and elType
+inline auto getTensorType(::mlir::MLIRContext *ctxt,
+                          ::mlir::ArrayRef<int64_t> shape,
+                          ::mlir::Type elType) {
+  return ::mlir::RankedTensorType::get(shape, elType); //, layout);
+}
+
 /// get dyn-sized mlir::RankedTensorType for given rank and elType
 inline auto getTensorType(::mlir::MLIRContext *ctxt, int64_t rank,
                           ::mlir::Type elType) {
@@ -87,11 +115,51 @@ inline auto getTensorType(::mlir::MLIRContext *ctxt, int64_t rank,
       elType); //, layout);
 }
 
+inline void
+dispatchIndexValues(const ::mlir::ValueRange &sizes,
+                    ::mlir::SmallVectorImpl<::mlir::Value> &dynamicVec,
+                    ::mlir::SmallVectorImpl<int64_t> &staticVec) {
+  for (auto v : sizes) {
+    if (auto cval = ::mlir::getConstantIntValue(v); cval && cval.value() == 1) {
+      staticVec.emplace_back(cval.value());
+    } else {
+      dynamicVec.emplace_back(v);
+      staticVec.emplace_back(::mlir::ShapedType::kDynamic);
+    }
+  }
+}
+
 /// create an empty RankedTensor with tiven shape and elType
 inline auto createEmptyTensor(::mlir::OpBuilder &builder, ::mlir::Location loc,
-                              ::mlir::Type elType, ::mlir::ValueRange shp) {
-  return builder.createOrFold<::mlir::tensor::EmptyOp>(
-      loc, getTensorType(builder.getContext(), shp.size(), elType), shp);
+                              ::mlir::Type elType,
+                              const ::mlir::ValueRange &shp) {
+  ::mlir::SmallVector<int64_t> staticSizes;
+  ::mlir::SmallVector<mlir::Value> dynamicSizes;
+  dispatchIndexValues(shp, dynamicSizes, staticSizes);
+  return builder.createOrFold<::mlir::tensor::EmptyOp>(loc, staticSizes, elType,
+                                                       dynamicSizes);
+}
+
+/// get mixed statically and dynamically sized mlir::MemRefType for given sizes
+/// and elType if strided==true make it a strided layout
+inline auto getMemRefType(::mlir::MLIRContext *ctxt,
+                          ::mlir::ArrayRef<int64_t> sizes, ::mlir::Type elType,
+                          bool strided = true) {
+  auto rank = sizes.size();
+  static auto kDynamic = ::mlir::ShapedType::kDynamic;
+  auto layout = ::mlir::StridedLayoutAttr::get(
+      ctxt, kDynamic, ::mlir::SmallVector<int64_t>(rank, kDynamic));
+
+  return ::mlir::MemRefType::get(
+      sizes, elType, strided ? layout : ::mlir::StridedLayoutAttr{});
+}
+
+/// get mixed statically and dynamically sized mlir::MemRefType for given sizes
+/// and elType if strided==true make it a strided layout
+inline auto getMemRefType(::mlir::MLIRContext *ctxt,
+                          const ::mlir::ValueRange &sizes, ::mlir::Type elType,
+                          bool strided = true) {
+  return getMemRefType(ctxt, getShapeFromValues(sizes), elType, strided);
 }
 
 /// get dyn-sized mlir::RankedTensorType for given rank and elType

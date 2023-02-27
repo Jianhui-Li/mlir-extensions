@@ -190,6 +190,38 @@ struct ExtractSliceLowering
   }
 };
 
+struct LoadOpLowering
+    : public mlir::OpConversionPattern<imex::ptensor::LoadOp> {
+  using OpConversionPattern::OpConversionPattern;
+
+  mlir::LogicalResult
+  matchAndRewrite(imex::ptensor::LoadOp op,
+                  imex::ptensor::LoadOp::Adaptor adaptor,
+                  mlir::ConversionPatternRewriter &rewriter) const override {
+    auto origType = op.getArray().getType().cast<imex::ptensor::PTensorType>();
+    auto src = adaptor.getArray();
+    if (!src.getType().isa<mlir::MemRefType>())
+      return mlir::failure();
+
+    auto *converter = getTypeConverter();
+    assert(converter && "Type converter is not set");
+
+    auto dstType = converter->convertType(op.getType());
+    if (!dstType || dstType != origType.getElementType())
+      return mlir::failure();
+
+    // auto results = imex::util::wrapEnvRegion(
+    //     rewriter, op->getLoc(), origType.getEnvironment(), dstType,
+    //     [&](mlir::OpBuilder &builder, mlir::Location loc) {
+    rewriter.replaceOpWithNewOp<mlir::memref::LoadOp>(op, src,
+                                                      adaptor.getIndices());
+    // });
+
+    // rewriter.replaceOp(op, results);
+    return mlir::success();
+  }
+};
+
 /// Convert PTensor's insert_slice to memref
 struct InsertSliceLowering
     : public ::mlir::OpConversionPattern<::imex::ptensor::InsertSliceOp> {
@@ -434,9 +466,18 @@ struct EWBinOpLowering
     // we expect tensorType as operands
     auto lhsMRTyp = lhsPtTyp.getMemRefType();
     auto rhsMRTyp = rhsPtTyp.getMemRefType();
+    auto elTyp = lhsMRTyp.getElementType();
     auto lhsRank = lhsMRTyp.getRank();
     auto rhsRank = rhsMRTyp.getRank();
-    auto elTyp = lhsMRTyp.getElementType();
+
+    for (auto s : lhsMRTyp.getShape()) {
+      if (s == 1)
+        --lhsRank;
+    }
+    for (auto s : rhsMRTyp.getShape()) {
+      if (s == 1)
+        --rhsRank;
+    }
 
     // get the input as tensors
     auto lhsMR = rewriter.create<::imex::ptensor::ExtractMemRefOp>(

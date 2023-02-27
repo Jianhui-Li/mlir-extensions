@@ -146,6 +146,27 @@ struct DistExtractSliceOpRWP
   }
 };
 
+struct DistLoadOpRWP : public RecOpRewritePattern<::imex::ptensor::LoadOp> {
+  using RecOpRewritePattern::RecOpRewritePattern;
+
+  ::mlir::LogicalResult
+  matchAndRewrite(::imex::ptensor::LoadOp op,
+                  ::mlir::PatternRewriter &rewriter) const override {
+
+    // get input and type
+    auto src = op.getArray();
+    auto inpDTTyp = src.getType().dyn_cast<::imex::dist::DistTensorType>();
+
+    if (inpDTTyp) {
+      return ::mlir::failure();
+    }
+
+    rewriter.replaceOpWithNewOp<::imex::dist::LoadOp>(op, src, op.getIndices());
+
+    return ::mlir::success();
+  }
+};
+
 /// Rewriting ::imex::ptensor::InsertSliceOp
 /// 1. Compute local slice of dst
 /// 2. Get local PTensors (dst and src)
