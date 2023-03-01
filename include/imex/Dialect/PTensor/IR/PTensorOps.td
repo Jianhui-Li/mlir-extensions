@@ -264,7 +264,7 @@ def SubviewOp : PTensor_OpWithOffsetSizesAndStrides<"subview", [
   }];
 
   let arguments = (ins
-    PTensor_PTensor:$source,
+    AnyType:$source,
     Variadic<Index>:$offsets,
     Variadic<Index>:$sizes,
     Variadic<Index>:$strides,

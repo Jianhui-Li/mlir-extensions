@@ -91,12 +91,20 @@ struct SubviewOpConverter
 
     auto loc = op.getLoc();
     // Get the local part of the global slice, team, rank, offsets
-    auto slcOffs = op.getOffsets();
-    auto slcSizes = op.getSizes();
-    auto slcStrides = op.getStrides();
-    ::mlir::ValueRange tOffs = op.getTargetOffsets();
-    ::mlir::ValueRange tSizes = op.getTargetSizes();
-    auto rank = slcOffs.size();
+    auto _slcOffs = adaptor.getOffsets();
+    auto _slcSizes = adaptor.getSizes();
+    auto _slcStrides = adaptor.getStrides();
+    auto sSlcOffs = adaptor.getStaticOffsets();
+    auto sSlcSizes = adaptor.getStaticSizes();
+    auto sSlcStrides = adaptor.getStaticStrides();
+    ::mlir::ValueRange tOffs = adaptor.getTargetOffsets();
+    ::mlir::ValueRange tSizes = adaptor.getTargetSizes();
+    auto rank = std::max(sSlcOffs.size(), _slcOffs.size());
+
+    // get offs, sizes strides as values
+    auto slcOffs = getMixedAsValues(loc, rewriter, _slcOffs, sSlcOffs);
+    auto slcSizes = getMixedAsValues(loc, rewriter, _slcSizes, sSlcSizes);
+    auto slcStrides = getMixedAsValues(loc, rewriter, _slcStrides, sSlcStrides);
 
     if (tOffs.empty()) {
       assert(tSizes.empty());
@@ -106,44 +114,30 @@ struct SubviewOpConverter
       tSizes = lTarget.getTSizes();
     }
 
-    ::mlir::SmallVector<::mlir::Value> tmp;
-    for (size_t i = 0; i < rank; ++i) {
-      if (auto cval = ::mlir::getConstantIntValue(slcSizes[i]);
-          cval && cval.value() == 1) {
-        std::cerr << "replacing dim " << i
-                  << " with constant size: " << cval.value() << std::endl;
-        tmp.emplace_back(slcSizes[i]);
-      } else {
-        tmp.emplace_back(tSizes[i]);
-      }
-    }
-    tSizes = tmp;
-
     // Compute local part of slice
     auto lOffs = createLocalOffsetsOf(loc, rewriter, src);
     auto lSlice = rewriter.create<::imex::dist::LocalOffsetForTargetSliceOp>(
         loc, lOffs, tOffs, slcOffs, slcStrides);
     auto lSlcOffsets = lSlice.getLOffsets();
 
-#if 0
-    auto zero = createIndex(loc, rewriter, 0);
-    (void)
-    rewriter.create<::mlir::func::CallOp>(
-        loc, "_idtr_extractslice", ::mlir::TypeRange(),
-        ::mlir::ValueRange {createExtractPtrFromMemRefFromValues(rewriter, loc, slcOffs),
-                            createExtractPtrFromMemRefFromValues(rewriter, loc, slcSizes),
-                            createExtractPtrFromMemRefFromValues(rewriter, loc, slcStrides),
-                            createExtractPtrFromMemRefFromValues(rewriter, loc, tOffs),
-                            createExtractPtrFromMemRefFromValues(rewriter, loc, tSizes),
-                            createExtractPtrFromMemRefFromValues(rewriter, loc, lSlcOffsets),
-                            zero,
-                            zero}
-    );
-#endif
+    // get static size==1 and strides back
+    ::mlir::SmallVector<::mlir::OpFoldResult> vOffs, vSizes, vStrides;
+    for (size_t i = 0; i < rank; ++i) {
+      vOffs.emplace_back(lSlcOffsets[i]);
+      vSizes.emplace_back(sSlcSizes[i] == 1
+                              ? ::mlir::OpFoldResult{rewriter.getIndexAttr(1)}
+                              : ::mlir::OpFoldResult{tSizes[i]});
+      auto s = sSlcStrides[i];
+      vStrides.emplace_back(
+          ::mlir::ShapedType::isDynamic(s)
+              ? ::mlir::OpFoldResult{slcStrides[i]}
+              : ::mlir::OpFoldResult{rewriter.getIndexAttr(s)});
+    }
+
     // create local view
     auto lTnsr = createLocalTensorOf(loc, rewriter, src);
     auto lView = rewriter.create<::imex::ptensor::SubviewOp>(
-        loc, resDTTyp.getPTensorType(), lTnsr, lSlcOffsets, tSizes, slcStrides);
+        loc, resDTTyp.getPTensorType(), lTnsr, vOffs, vSizes, vStrides);
 
     // init our new dist tensor
     auto team = createTeamOf(loc, rewriter, src);

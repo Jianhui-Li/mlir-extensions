@@ -147,8 +147,7 @@ struct ExtractTensorLowering
       // type materialization for function arguments. This requires chasing the
       // chain of casts. We cannot chase casts with more than one operand
       // without getting into realms of unclear semantics.
-      while (inpOp && inpOp.getOperands().size() == 1 &&
-             inpOp.getOperands().front().getType().isa<::mlir::MemRefType>()) {
+      while (inpOp && inpOp.getOperands().size() == 1) {
         if (auto defOp =
                 inpOp.getOperands()
                     .front()
@@ -498,36 +497,37 @@ struct EWBinOpLowering
           loc, rewriter.getIndexType(), tmp);
     }
     auto tensor = createEmptyTensor(rewriter, loc, elTyp, resShapeV);
-    auto resMRTyp = getMemRefType(rewriter.getContext(), resShapeV, elTyp);
+    auto resMRTyp = getMemRefType(rewriter.getContext(), rank, elTyp);
 
     // Get signless operands into vec
     // llvm::SmallVector<mlir::Value, 2> oprnds = { lhsTnsr, rhsTnsr };
 
     // create binop as linalg::generic
-#if 0
     ::mlir::SmallVector<::mlir::AffineExpr> lhsExprs, rhsExprs, resExprs;
-    ::mlir::SmallVector<::mlir::Value> symbols;
-    auto one = createIndex(loc, rewriter, 1);
     for (int i = 0; i < lhsRank; ++i) {
-      lhsExprs.emplace_back(rewriter.getAffineDimExpr(i) * rewriter.getAffineSymbolExpr(i));
-      symbols.emplace_back(one);
+      lhsExprs.emplace_back(lhsMRTyp.getDimSize(i) == 1
+                                ? rewriter.getAffineConstantExpr(0)
+                                : rewriter.getAffineDimExpr(i));
     }
     for (int i = 0; i < rhsRank; ++i) {
-      rhsExprs.emplace_back(rewriter.getAffineDimExpr(i) * rewriter.getAffineSymbolExpr(lhsRank + i));
+      rhsExprs.emplace_back(rhsMRTyp.getDimSize(i) == 1
+                                ? rewriter.getAffineConstantExpr(0)
+                                : rewriter.getAffineDimExpr(i));
     }
     for (unsigned i = 0; i < rank; ++i) {
       resExprs.emplace_back(rewriter.getAffineDimExpr(i));
-      symbols.emplace_back(one);
     }
-    auto maps = ::mlir::AffineMap::inferFromExprList({lhsExprs, rhsExprs, resExprs});
-#endif
+    auto maps =
+        ::mlir::AffineMap::inferFromExprList({lhsExprs, rhsExprs, resExprs});
 
+#if 0
     const ::mlir::AffineMap maps[] = {
         ::mlir::AffineMap::getMinorIdentityMap(rank, lhsRank,
                                                rewriter.getContext()),
         ::mlir::AffineMap::getMinorIdentityMap(rank, rhsRank,
                                                rewriter.getContext()),
         ::mlir::AffineMap::getMultiDimIdentityMap(rank, rewriter.getContext())};
+#endif
     llvm::SmallVector<mlir::utils::IteratorType> iterators(
         rank, ::mlir::utils::IteratorType::parallel);
 

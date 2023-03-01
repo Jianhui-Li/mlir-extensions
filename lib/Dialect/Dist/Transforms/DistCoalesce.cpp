@@ -19,6 +19,8 @@
 
 #include <mlir/Analysis/AliasAnalysis/LocalAliasAnalysis.h>
 #include <mlir/Dialect/Func/IR/FuncOps.h>
+#include <mlir/IR/BuiltinTypes.h>
+#include <mlir/Interfaces/ShapedOpInterfaces.h>
 
 #include "PassDetail.h"
 
@@ -125,11 +127,29 @@ struct DistCoalescePass : public ::imex::DistCoalesceBase<DistCoalescePass> {
     } else {
       // no existing target -> use ours
       op->insertOperands(op->getNumOperands(), tOffs);
+      auto nOpsBefore = op->getNumOperands();
       op->insertOperands(op->getNumOperands(), tSizes);
+
+      // target sizes might be larger than our static sizes
+      // FIXME dynamic broadcasting needs to check dyn sizes, too
       const int32_t rank = static_cast<int32_t>(tOffs.size());
-      ::std::array<int32_t, 6> sSzs{1, rank, rank, rank, rank, rank};
-      op->setAttr(op.getOperandSegmentSizesAttrName(),
-                  builder.getDenseI32ArrayAttr(sSzs));
+      for (int32_t i = 0; i < rank; ++i) {
+        auto s = op.getStaticSizes()[i];
+        if (!::mlir::ShapedType::isDynamic(s)) {
+          op->setOperand(i + nOpsBefore, createIndex(op->getLoc(), builder, s));
+          // if the static size is 1, then we need to duplicate
+          // -> target offset is the same on all procs: 0
+          if (s == 1) {
+            op->setOperand(i + nOpsBefore - rank,
+                           createIndex(op->getLoc(), builder, 0));
+          }
+        }
+      }
+
+      const auto sSzsName = op.getOperandSegmentSizesAttrName();
+      const auto oa = op->getAttrOfType<::mlir::DenseI32ArrayAttr>(sSzsName);
+      ::std::array<int32_t, 6> sSzs{oa[0], oa[1], oa[2], oa[3], rank, rank};
+      op->setAttr(sSzsName, builder.getDenseI32ArrayAttr(sSzs));
     }
     return nullptr;
   }
@@ -241,6 +261,12 @@ struct DistCoalescePass : public ::imex::DistCoalesceBase<DistCoalescePass> {
     ::mlir::SmallVector<::imex::dist::RePartitionOp> rpOps;
 
     // store all repartitionops with target in vector
+    root->walk([&](::mlir::Operation *op) {
+      builder.setInsertionPoint(op);
+      return ::mlir::WalkResult::interrupt();
+    });
+
+    // store all repartitionops with target in vector
     root->walk([&](::imex::dist::RePartitionOp op) {
       if (!op.getTargetOffsets().empty()) {
         rpOps.emplace_back(op);
@@ -287,7 +313,7 @@ struct DistCoalescePass : public ::imex::DistCoalesceBase<DistCoalescePass> {
 
     // outer loop iterates base over base pointers
     for (auto grpP : opsGroups) {
-      if (grpP.second.size() <= 1)
+      if (grpP.second.size() < 1)
         continue;
 
       auto &base = grpP.first;
@@ -316,10 +342,10 @@ struct DistCoalescePass : public ::imex::DistCoalesceBase<DistCoalescePass> {
         }
 
         // iterate over group until all ops are handled
-        // we might not be able to move all subviewops to the point which
+        // we might not be able to move all SubviewOps to the point which
         // is early enough to have a single repartition. Hence we have to loop
         // until we handled all sub-groups.
-        while (grp.size() > 1) {
+        while (grp.size() > 0) {
           ::mlir::SmallVector<::imex::dist::RePartitionOp> rpToElim;
           auto fOp = grp.front();
           ::mlir::Operation *eIPnt = nullptr;
@@ -347,7 +373,7 @@ struct DistCoalescePass : public ::imex::DistCoalesceBase<DistCoalescePass> {
               // if it's safe to move: do it
               if (can_move) {
                 if (e) {
-                  if (nEx < 2) {
+                  if (false && nEx < 2) {
                     e->moveBefore(rpIPnt);
                   } else {
                     auto loc = e.getLoc();
@@ -367,11 +393,17 @@ struct DistCoalescePass : public ::imex::DistCoalesceBase<DistCoalescePass> {
 
                     auto rank = tOffs.size();
                     // extend local bounding box
+                    auto _offs = getMixedAsValues(loc, builder, e.getOffsets(),
+                                                  e.getStaticOffsets());
+                    auto _sizes = getMixedAsValues(loc, builder, e.getSizes(),
+                                                   e.getStaticSizes());
+                    auto _strides = getMixedAsValues(
+                        loc, builder, e.getStrides(), e.getStaticStrides());
+
                     auto bbox =
                         builder.create<::imex::dist::LocalBoundingBoxOp>(
-                            loc, base->getResult(0), e.getOffsets(),
-                            e.getSizes(), e.getStrides(), tOffs, tSizes, bbOffs,
-                            bbSizes);
+                            loc, base->getResult(0), _offs, _sizes, _strides,
+                            tOffs, tSizes, bbOffs, bbSizes);
                     bbOffs = bbox.getResultOffsets();
                     bbSizes = bbox.getResultSizes();
                     bbIPnt = bbox;

@@ -215,43 +215,43 @@ llvm::SmallBitVector imex::ptensor::SubviewOp::getDroppedDims() {
   return droppedDims;
 }
 
-static bool isIdentitySubview(imex::ptensor::SubviewOp op) {
-  auto srcType = op.getSource().getType().cast<imex::ptensor::PTensorType>();
-  if (srcType != op.getResult().getType())
-    return false;
+// static bool isIdentitySubview(imex::ptensor::SubviewOp op) {
+//   auto srcType = op.getSource().getType().cast<imex::ptensor::PTensorType>();
+//   if (srcType != op.getResult().getType())
+//     return false;
 
-  for (auto val : op.getMixedOffsets())
-    if (!mlir::isConstantIntValue(val, 0))
-      return false;
+//   for (auto val : op.getMixedOffsets())
+//     if (!mlir::isConstantIntValue(val, 0))
+//       return false;
 
-  auto srcShape = srcType.getShape();
-  for (auto [i, val] : llvm::enumerate(op.getMixedSizes())) {
-    assert(i < srcShape.size());
-    auto shapeVal = srcShape[i];
-    if (mlir::ShapedType::isDynamic(shapeVal)) {
-      auto dim = val.dyn_cast<mlir::Value>();
-      if (!dim)
-        return false;
+//   auto srcShape = srcType.getShape();
+//   for (auto [i, val] : llvm::enumerate(op.getMixedSizes())) {
+//     assert(i < srcShape.size());
+//     auto shapeVal = srcShape[i];
+//     if (mlir::ShapedType::isDynamic(shapeVal)) {
+//       auto dim = val.dyn_cast<mlir::Value>();
+//       if (!dim)
+//         return false;
 
-      auto dimOp = dim.getDefiningOp<imex::ptensor::DimOp>();
-      if (!dimOp)
-        return false;
+//       auto dimOp = dim.getDefiningOp<imex::ptensor::DimOp>();
+//       if (!dimOp)
+//         return false;
 
-      auto dimInd = dimOp.getConstantIndex();
-      if (!dimInd || *dimInd != static_cast<int64_t>(i))
-        return false;
-    } else {
-      if (!mlir::isConstantIntValue(val, shapeVal))
-        return false;
-    }
-  }
+//       auto dimInd = dimOp.getConstantIndex();
+//       if (!dimInd || *dimInd != static_cast<int64_t>(i))
+//         return false;
+//     } else {
+//       if (!mlir::isConstantIntValue(val, shapeVal))
+//         return false;
+//     }
+//   }
 
-  for (auto val : op.getMixedStrides())
-    if (!mlir::isConstantIntValue(val, 1))
-      return false;
+//   for (auto val : op.getMixedStrides())
+//     if (!mlir::isConstantIntValue(val, 1))
+//       return false;
 
-  return true;
-}
+//   return true;
+// }
 
 // mlir::OpFoldResult
 // imex::ptensor::SubviewOp::fold(llvm::ArrayRef<mlir::Attribute> /*operands*/)

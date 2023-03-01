@@ -116,6 +116,20 @@ inline auto getTensorType(::mlir::MLIRContext *ctxt, int64_t rank,
       elType); //, layout);
 }
 
+inline ::mlir::SmallVector<::mlir::Value>
+getMixedAsValues(const ::mlir::Location &loc, ::mlir::OpBuilder &builder,
+                 const ::mlir::ValueRange &dyns,
+                 ::llvm::ArrayRef<int64_t> statics) {
+  ::mlir::SmallVector<::mlir::Value> out;
+  auto dyn = dyns.begin();
+  for (auto s : statics) {
+    out.emplace_back(::mlir::ShapedType::isDynamic(s)
+                         ? *(dyn++)
+                         : createIndex(loc, builder, s));
+  }
+  return out;
+}
+
 inline void
 dispatchIndexValues(const ::mlir::ValueRange &sizes,
                     ::mlir::SmallVectorImpl<::mlir::Value> &dynamicVec,

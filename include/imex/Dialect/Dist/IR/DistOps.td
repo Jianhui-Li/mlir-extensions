@@ -372,22 +372,22 @@ def SubviewOp : Dist_Op<"subview", [AttrSizedOperandSegments, Pure]> {
         Variadic<Index>:$offsets,
         Variadic<Index>:$sizes,
         Variadic<Index>:$strides,
+        DenseI64ArrayAttr:$static_offsets,
+        DenseI64ArrayAttr:$static_sizes,
+        DenseI64ArrayAttr:$static_strides,
         Variadic<Index>:$target_offsets,
         Variadic<Index>:$target_sizes
     );
     let results = (outs AnyType:$result);
 
     let assemblyFormat = [{
-        $source oilist(`offs` $offsets | `sizes` $sizes | `strides` $strides)  attr-dict `:` qualified(type($source)) `to` qualified(type($result)) oilist(`toffs` $target_offsets | `tsizes` $target_sizes)
+        $source ``
+        custom<DynamicIndexList>($offsets, $static_offsets)
+        custom<DynamicIndexList>($sizes, $static_sizes)
+        custom<DynamicIndexList>($strides, $static_strides)
+        attr-dict `:` qualified(type($source)) `to` qualified(type($result))
+        oilist(`toffs` $target_offsets | `tsizes` $target_sizes)
     }];
-
-    let builders = [
-        // auto-deduce return type
-        OpBuilder<(ins "::mlir::Type":$rtyp, "::mlir::Value":$d_tensor, "::mlir::ValueRange":$offsets, "::mlir::ValueRange":$sizes, "::mlir::ValueRange":$strides),
-        [{
-            build($_builder, $_state, rtyp, d_tensor, offsets, sizes, strides, {}, {});
-        }]>,
-    ];
 }
 
 
