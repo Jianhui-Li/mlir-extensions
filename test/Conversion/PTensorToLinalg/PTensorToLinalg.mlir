@@ -1,11 +1,11 @@
 // RUN: imex-opt --split-input-file --convert-ptensor-to-linalg %s -verify-diagnostics -o -| FileCheck %s
 
 // -----
-func.func @test_subview(%arg0: !ptensor.ptensor<1 x i64>) -> !ptensor.ptensor<1 x i64> {
+func.func @test_subview(%arg0: !ptensor.ptensor<?xi64>) -> !ptensor.ptensor<?xi64> {
     %c0 = arith.constant 0 : index
     %c3 = arith.constant 3 : index
-    %0 = ptensor.subview %arg0[%c0][%c3][%c3] : !ptensor.ptensor<1 x i64> to !ptensor.ptensor<1 x i64>
-    return %0 : !ptensor.ptensor<1 x i64>
+    %0 = ptensor.subview %arg0[%c0][%c3][%c3] : !ptensor.ptensor<?xi64> to !ptensor.ptensor<?xi64>
+    return %0 : !ptensor.ptensor<?xi64>
 }
 // CHECK-LABEL: @test_subview
 // CHECK-NEXT: [[C0:%.*]] = arith.constant
@@ -14,9 +14,9 @@ func.func @test_subview(%arg0: !ptensor.ptensor<1 x i64>) -> !ptensor.ptensor<1 
 // CHECK-NEXT: return [[V0]] : memref<?xi64, strided<[?], offset: ?>>
 
 // -----
-func.func @test_arange(%arg0: i64, %arg1: i64, %arg2: i64) -> !ptensor.ptensor<1 x index> {
-    %0 = ptensor.arange %arg0 %arg1 %arg2 : (i64, i64, i64) -> !ptensor.ptensor<1 x index>
-    return %0 : !ptensor.ptensor<1 x index>
+func.func @test_arange(%arg0: i64, %arg1: i64, %arg2: i64) -> !ptensor.ptensor<?xindex> {
+    %0 = ptensor.arange %arg0 %arg1 %arg2 : (i64, i64, i64) -> !ptensor.ptensor<?xindex>
+    return %0 : !ptensor.ptensor<?xindex>
 }
 // CHECK-LABEL: @test_arange
 // CHECK: [[C0:%.*]] = arith.select
@@ -26,9 +26,9 @@ func.func @test_arange(%arg0: i64, %arg1: i64, %arg2: i64) -> !ptensor.ptensor<1
 // CHECK: linalg.generic{{.*}}["parallel"]
 // CHECK: return %{{[0-9]+}} : memref<?xindex, strided<[?], offset: ?>>
 
-func.func @test_create(%arg0: index, %arg1: index, %arg2: i64) -> !ptensor.ptensor<2 x i64> {
-    %0 = ptensor.create %arg0, %arg1 value %arg2 {dtype = 2 : i8} : (index, index, i64) -> !ptensor.ptensor<2 x i64>
-    return %0 : !ptensor.ptensor<2 x i64>
+func.func @test_create(%arg0: index, %arg1: index, %arg2: i64) -> !ptensor.ptensor<?x?xi64> {
+    %0 = ptensor.create %arg0, %arg1 value %arg2 {dtype = 2 : i8} : (index, index, i64) -> !ptensor.ptensor<?x?xi64>
+    return %0 : !ptensor.ptensor<?x?xi64>
 }
 // CHECK-LABEL: @test_create
 // CHECK: tensor.empty
@@ -39,9 +39,9 @@ func.func @test_create(%arg0: index, %arg1: index, %arg2: i64) -> !ptensor.ptens
 // CHECK: return %{{[0-9]+}} : memref<?x?xi64, strided<[?, ?], offset: ?>>
 
 // -----
-func.func @test_ewbin(%arg0: !ptensor.ptensor<1 x i64>) -> !ptensor.ptensor<1 x i64> {
-    %0 = "ptensor.ewbin"(%arg0, %arg0) {op = 23 : i32} : (!ptensor.ptensor<1 x i64>, !ptensor.ptensor<1 x i64>) -> !ptensor.ptensor<1 x i64>
-    return %0 : !ptensor.ptensor<1 x i64>
+func.func @test_ewbin(%arg0: !ptensor.ptensor<?xi64>) -> !ptensor.ptensor<?xi64> {
+    %0 = "ptensor.ewbin"(%arg0, %arg0) {op = 23 : i32} : (!ptensor.ptensor<?xi64>, !ptensor.ptensor<?xi64>) -> !ptensor.ptensor<?xi64>
+    return %0 : !ptensor.ptensor<?xi64>
 }
 // CHECK-LABEL: #map = affine_map<(d0) -> (d0)>
 // CHECK-LABEL: @test_ewbin(
@@ -54,9 +54,9 @@ func.func @test_ewbin(%arg0: !ptensor.ptensor<1 x i64>) -> !ptensor.ptensor<1 x 
 // CHECK: arith.muli
 
 // -----
-func.func @test_ewbin_bcast(%arg0: !ptensor.ptensor<2 x i64>, %arg1: !ptensor.ptensor<0 x i64>) -> !ptensor.ptensor<2 x i64> {
-    %0 = "ptensor.ewbin"(%arg0, %arg1) {op = 0 : i32} : (!ptensor.ptensor<2 x i64>, !ptensor.ptensor<0 x i64>) -> !ptensor.ptensor<2 x i64>
-    return %0 : !ptensor.ptensor<2 x i64>
+func.func @test_ewbin_bcast(%arg0: !ptensor.ptensor<?x?xi64>, %arg1: !ptensor.ptensor<i64>) -> !ptensor.ptensor<?x?xi64> {
+    %0 = "ptensor.ewbin"(%arg0, %arg1) {op = 0 : i32} : (!ptensor.ptensor<?x?xi64>, !ptensor.ptensor<i64>) -> !ptensor.ptensor<?x?xi64>
+    return %0 : !ptensor.ptensor<?x?xi64>
 }
 // CHECK-LABEL: #map = affine_map<(d0, d1) -> (d0, d1)>
 // CHECK: #map1 = affine_map<(d0, d1) -> ()>
@@ -71,9 +71,9 @@ func.func @test_ewbin_bcast(%arg0: !ptensor.ptensor<2 x i64>, %arg1: !ptensor.pt
 // CHECK: arith.addi
 
 // -----
-func.func @test_ewbin_3d(%arg0: !ptensor.ptensor<3 x i64>) -> !ptensor.ptensor<3 x i64> {
-    %0 = "ptensor.ewbin"(%arg0, %arg0) {op = 0 : i32} : (!ptensor.ptensor<3 x i64>, !ptensor.ptensor<3 x i64>) -> !ptensor.ptensor<3 x i64>
-    return %0 : !ptensor.ptensor<3 x i64>
+func.func @test_ewbin_3d(%arg0: !ptensor.ptensor<?x?x?xi64>) -> !ptensor.ptensor<?x?x?xi64> {
+    %0 = "ptensor.ewbin"(%arg0, %arg0) {op = 0 : i32} : (!ptensor.ptensor<?x?x?xi64>, !ptensor.ptensor<?x?x?xi64>) -> !ptensor.ptensor<?x?x?xi64>
+    return %0 : !ptensor.ptensor<?x?x?xi64>
 }
 // CHECK-LABEL: #map = affine_map<(d0, d1, d2) -> (d0, d1, d2)>
 // CHECK-LABEL: @test_ewbin_3d
@@ -89,9 +89,9 @@ func.func @test_ewbin_3d(%arg0: !ptensor.ptensor<3 x i64>) -> !ptensor.ptensor<3
 // CHECK: return %{{.+}} : memref<?x?x?xi64, strided<[?, ?, ?], offset: ?>>
 
 // -----
-func.func @test_reduction(%arg0: !ptensor.ptensor<1 x i64>) -> i64 {
-    %0 = "ptensor.reduction"(%arg0) {op = 4 : i32} : (!ptensor.ptensor<1 x i64>) -> !ptensor.ptensor<0 x i64>
-    %1 = builtin.unrealized_conversion_cast %0 : !ptensor.ptensor<0 x i64> to i64
+func.func @test_reduction(%arg0: !ptensor.ptensor<?xi64>) -> i64 {
+    %0 = "ptensor.reduction"(%arg0) {op = 4 : i32} : (!ptensor.ptensor<?xi64>) -> !ptensor.ptensor<i64>
+    %1 = builtin.unrealized_conversion_cast %0 : !ptensor.ptensor<i64> to i64
     return %1 : i64
 }
 // CHECK-LABEL: @test_reduction
@@ -100,9 +100,9 @@ func.func @test_reduction(%arg0: !ptensor.ptensor<1 x i64>) -> i64 {
 // CHECK: return %{{.}} : i64
 
 // -----
-func.func @test_reduction_3d(%arg0: !ptensor.ptensor<3 x i64>) -> i64 {
-    %0 = "ptensor.reduction"(%arg0) {op = 4 : i32} : (!ptensor.ptensor<3 x i64>) -> !ptensor.ptensor<0 x i64>
-    %1 = builtin.unrealized_conversion_cast %0 : !ptensor.ptensor<0 x i64> to i64
+func.func @test_reduction_3d(%arg0: !ptensor.ptensor<?x?x?xi64>) -> i64 {
+    %0 = "ptensor.reduction"(%arg0) {op = 4 : i32} : (!ptensor.ptensor<?x?x?xi64>) -> !ptensor.ptensor<i64>
+    %1 = builtin.unrealized_conversion_cast %0 : !ptensor.ptensor<i64> to i64
     return %1 : i64
 }
 // CHECK-LABEL: @test_reduction_3d

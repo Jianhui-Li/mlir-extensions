@@ -11,7 +11,7 @@ module {
 // CHECK-LABEL: func.func private @_idtr_nprocs(index) -> index
 // CHECK-LABEL: func.func private @_idtr_prank(index) -> index
 // CHECK-LABEL: func.func private @_idtr_reduce_all(index, index, index, index, i32, i32)
-// CHECK-LABEL: func.func private @_idtr_rebalance(index, index, index, index, index, index, i32, index, index, index, index)
+// CHECK-LABEL: func.func private @_idtr_repartition(index, index, i32, index, index, index, index, index, index, index, index)
 // CHECK-LABEL: func.func @test_nprocs(%arg0: index) -> index {
 // CHECK: @_idtr_nprocs(%arg0)
 
@@ -23,19 +23,15 @@ module {
         return %1 : index
     }
 }
-// CHECK-LABEL: func.func private @_idtr_nprocs(index) -> index
-// CHECK-LABEL: func.func private @_idtr_prank(index) -> index
-// CHECK-LABEL: func.func private @_idtr_reduce_all(index, index, index, index, i32, i32)
-// CHECK-LABEL: func.func private @_idtr_rebalance(index, index, index, index, index, index, i32, index, index, index, index)
 // CHECK-LABEL: func.func @test_prank(%arg0: index) -> index {
 // CHECK: call @_idtr_prank(%arg0)
 
 // -----
 module {
     "dist.runtime_prototypes"() : () -> ()
-    func.func @test_init_dist_tensor(%pt: !ptensor.ptensor<1 x i64>, %team: index, %gshape: index, %loffs: index) -> !dist.dtensor<<1 x i64>, true> {
-        %1 = "dist.init_dist_tensor"(%pt, %team, %gshape, %loffs) : (!ptensor.ptensor<1 x i64>, index, index, index) -> !dist.dtensor<<1 x i64>, true>
-        return %1 : !dist.dtensor<<1 x i64>, true>
+    func.func @test_init_dist_tensor(%pt: !ptensor.ptensor<?xi64>, %team: index, %gshape: index, %loffs: index) -> !dist.dtensor<<?xi64>> {
+        %1 = dist.init_dist_tensor %pt %team 1 %gshape offsets %loffs : !ptensor.ptensor<?xi64>, index, index, index to(!dist.dtensor<<?xi64>>)
+        return %1 : !dist.dtensor<<?xi64>>
     }
 }
 // CHECK-LABEL: func.func @test_init_dist_tensor
@@ -69,77 +65,58 @@ module {
 
 // -----
 module {
-    func.func @test_local_of_slice(%arg0: !dist.dtensor<<1 x i64>, true>, %c0 : index, %c3 : index) -> (index, index, index) {
-        %l_offsets, %l_sizes, %g_offsets = dist.local_of_slice %arg0[%c0] [%c3] [%c3] : !dist.dtensor<<1 x i64>, true> to (index, index, index)
-        return %l_offsets, %l_sizes, %g_offsets : index, index, index
+    func.func @test_local_target_of_slice(%arg0: !dist.dtensor<<?xi64>>, %c0 : index, %c3 : index) -> (index, index) {
+        %l_offsets, %l_sizes = dist.local_target_of_slice %arg0[%c0] [%c3] [%c3] !dist.dtensor<<?xi64>> to (index, index)
+        return %l_offsets, %l_sizes : index, index
     }
 }
-// CHECK-LABEL: func.func @test_local_of_slice(%arg0: !ptensor.ptensor<1 x i64>, %arg1: index, %arg2: memref<1xindex>, %arg3: memref<1xindex>, %arg4: index, %arg5: index) -> (index, index, index) {
-// CHECK: "ptensor.extract_tensor"(%arg0) : (!ptensor.ptensor<1 x i64>) -> memref<?xi64, strided<[?], offset: ?>>
+// CHECK-LABEL: func.func @test_local_target_of_slice(%arg0: !ptensor.ptensor<?xi64>, %arg1: index, %arg2: index, %arg3: memref<1xindex>, %arg4: memref<1xindex>, %arg5: index, %arg6: index) -> (index, index) {
 // CHECK: memref.load
+// CHECK: "ptensor.extract_tensor"(%arg0) : (!ptensor.ptensor<?xi64>) -> memref<?xi64, strided<[?], offset: ?>>
 // CHECK: memref.dim
-// CHECK: arith.cmpi ult
-// CHECK: arith.cmpi ule
+// CHECK: arith.muli
 // CHECK: arith.select
-// CHECK: arith.select
-// CHECK: arith.select
-// CHECK: [[V1:%.*]] = arith.select
-// CHECK: arith.select
-// CHECK: [[V2:%.*]] = arith.select
-// CHECK: arith.addi
-// CHECK: arith.divsi
-// CHECK: arith.select
-// CHECK: [[V3:%.*]] = arith.select
-// CHECK: return [[V1]], [[V2]], [[V3]] : index, index, index
+// CHECK: [[V0:%.*]] = arith.select
+// CHECK: scf.if [[V0]] -> (index, index) {
+// CHECK: scf.yield %15, %20 : index, index
+// CHECK: else
+// CHECK: scf.yield %10, %c0_1 : index, index
+// CHECK: return
 
 // -----
-func.func @test_0d_inout(%arg0: !dist.dtensor<<0 x i64>, true>, %arg1: !dist.dtensor<<0 x i64>, true>) -> !dist.dtensor<<0 x i64>, true> {
-  %0 = "dist.local_tensor_of"(%arg0) : (!dist.dtensor<<0 x i64>, true>) -> !ptensor.ptensor<0 x i64>
-  %1 = "dist.local_tensor_of"(%arg1) : (!dist.dtensor<<0 x i64>, true>) -> !ptensor.ptensor<0 x i64>
-  %2 = "ptensor.ewbin"(%0, %1) {op = 23 : i32} : (!ptensor.ptensor<0 x i64>, !ptensor.ptensor<0 x i64>) -> !ptensor.ptensor<0 x i64>
-  %3 = "dist.team_of"(%arg0) : (!dist.dtensor<<0 x i64>, true>) -> index
-  %4 = "dist.init_dist_tensor"(%2, %3) : (!ptensor.ptensor<0 x i64>, index) -> !dist.dtensor<<0 x i64>, true>
-  return %4 : !dist.dtensor<<0 x i64>, true>
+func.func @test_0d_inout(%arg0: !dist.dtensor<<i64>>, %arg1: !dist.dtensor<<i64>>) -> !dist.dtensor<<i64>> {
+  %0 = "dist.local_tensor_of"(%arg0) : (!dist.dtensor<<i64>>) -> !ptensor.ptensor<i64>
+  %1 = "dist.local_tensor_of"(%arg1) : (!dist.dtensor<<i64>>) -> !ptensor.ptensor<i64>
+  %2 = "ptensor.ewbin"(%0, %1) {op = 23 : i32} : (!ptensor.ptensor<i64>, !ptensor.ptensor<i64>) -> !ptensor.ptensor<i64>
+  %3 = "dist.team_of"(%arg0) : (!dist.dtensor<<i64>>) -> index
+  %4 = dist.init_dist_tensor %2 %3 1 : !ptensor.ptensor<i64>, index to (!dist.dtensor<<i64>>)
+  return %4 : !dist.dtensor<<i64>>
 }
-// CHECK-LABEL: func.func @test_0d_inout(%arg0: !ptensor.ptensor<0 x i64>, %arg1: index, %arg2: !ptensor.ptensor<0 x i64>, %arg3: index) -> (!ptensor.ptensor<0 x i64>, index) {
+// CHECK-LABEL: func.func @test_0d_inout(%arg0: !ptensor.ptensor<i64>, %arg1: index, %arg2: index, %arg3: !ptensor.ptensor<i64>, %arg4: index, %arg5: index) -> (!ptensor.ptensor<i64>, index, index) {
 // CHECK: [[V1:%.*]] = "ptensor.ewbin"
-// CHECK: return [[V1]], %arg1 : !ptensor.ptensor<0 x i64>, index
+// CHECK: [[V2:%.*]] = arith.constant
+// CHECK: return [[V1]], %arg1, [[V2]] : !ptensor.ptensor<i64>, index, index
 
 // -----
 module {
     "dist.runtime_prototypes"() : () -> ()
-    func.func @test_rebalance(%arg0: !dist.dtensor<<2 x i64>, false>) -> !dist.dtensor<<2 x i64>, true> {
-    %0 = "dist.rebalance"(%arg0) : (!dist.dtensor<<2 x i64>, false>) -> !dist.dtensor<<2 x i64>, true>
-    return %0 : !dist.dtensor<<2 x i64>, true>
+    func.func @test_repartition(%arg0: !dist.dtensor<<?x?xi64>>) -> !dist.dtensor<<?x?xi64>> {
+    %0 = dist.repartition %arg0 : (!dist.dtensor<<?x?xi64>>) to (!dist.dtensor<<?x?xi64>>)
+    return %0 : !dist.dtensor<<?x?xi64>>
     }
 }
-// CHECK-LABEL: func.func @test_rebalance(%arg0: !ptensor.ptensor<2 x i64>, %arg1: index, %arg2: memref<2xindex>, %arg3: memref<2xindex>) -> (!ptensor.ptensor<2 x i64>, index, memref<2xindex>, memref<2xindex>) {
-// CHECK: [[V1:%.*]] = "ptensor.extract_tensor"(%arg0)
-// CHECK: memref.extract_strided_metadata [[V1]]
-// CHECK: memref.extract_aligned_pointer_as_index [[V1]]
-// CHECK: memref.load %arg2[
-// CHECK: memref.load %arg2[
-// CHECK: memref.load %arg3[
-// CHECK: memref.load %arg3[
-// CHECK: memref.alloc() {alignment = 8 : i64} : memref<2xindex>
-// CHECK: memref.store
-// CHECK: memref.store
+// CHECK-LABEL: @test_repartition(%arg0: !ptensor.ptensor<?x?xi64>, %arg1: index, %arg2: index, %arg3: memref<2xindex>, %arg4: memref<2xindex>) -> (!ptensor.ptensor<?x?xi64>, index, index, memref<2xindex>, memref<2xindex>) {
 // CHECK: memref.extract_aligned_pointer_as_index
-// CHECK: memref.alloc() {alignment = 8 : i64} : memref<2xindex>
-// CHECK: memref.store
-// CHECK: memref.store
 // CHECK: memref.extract_aligned_pointer_as_index
-// CHECK: memref.alloc() {alignment = 8 : i64} : memref<2xindex>
-// CHECK: memref.store
-// CHECK: memref.store
 // CHECK: memref.extract_aligned_pointer_as_index
-// CHECK: memref.alloc() {alignment = 8 : i64} : memref<2xindex>
+// CHECK: memref.extract_aligned_pointer_as_index
+// CHECK: memref.extract_aligned_pointer_as_index
+// CHECK: memref.extract_aligned_pointer_as_index
+// CHECK: memref.extract_aligned_pointer_as_index
+// CHECK: memref.extract_aligned_pointer_as_index
+// CHECK: call @_idtr_repartition
 // CHECK: memref.store
 // CHECK: memref.store
-// CHECK: memref.extract_aligned_pointer_as_index
-// CHECK: call @_idtr_nprocs(%arg1) : (index) -> index
-// CHECK: call @_idtr_prank(%arg1) : (index) -> index
-// CHECK: ptensor.create
-// CHECK: "ptensor.extract_tensor"(
-// CHECK: memref.extract_aligned_pointer_as_index
-// CHECK: call @_idtr_rebalance
+// CHECK: memref.store
+// CHECK: memref.store
+// CHECK: return
