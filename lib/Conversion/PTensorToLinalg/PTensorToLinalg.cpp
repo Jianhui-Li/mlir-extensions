@@ -1,6 +1,6 @@
 //===- PTensorToLinalg.cpp - PTensorToLinalg conversion  -------*- C++ -*-===//
 //
-// Copyright 2022 Intel Corporation
+// Copyright 2023 Intel Corporation
 // Part of the IMEX Project, under the Apache License v2.0 with LLVM Exceptions.
 // See https://llvm.org/LICENSE.txt for license information.
 // SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
@@ -37,14 +37,13 @@
 
 #include <mlir/Dialect/Affine/IR/AffineOps.h>
 #include <mlir/Dialect/Arith/IR/Arith.h>
+#include <mlir/Dialect/Bufferization/IR/Bufferization.h>
 #include <mlir/Dialect/Func/IR/FuncOps.h>
 #include <mlir/Dialect/Func/Transforms/FuncConversions.h>
 #include <mlir/Dialect/LLVMIR/LLVMDialect.h>
 #include <mlir/Dialect/Linalg/IR/Linalg.h>
 #include <mlir/Dialect/Linalg/Utils/Utils.h>
 #include <mlir/Dialect/Shape/IR/Shape.h>
-// #include <mlir/Dialect/memref/IR/MemRef.h>
-#include <mlir/Dialect/Bufferization/IR/Bufferization.h>
 #include <mlir/Dialect/Tensor/IR/Tensor.h>
 #include <mlir/Pass/Pass.h>
 
@@ -113,9 +112,6 @@ struct MkPTensorLowering
   matchAndRewrite(::imex::ptensor::MkPTensorOp op,
                   ::imex::ptensor::MkPTensorOp::Adaptor adaptor,
                   ::mlir::ConversionPatternRewriter &rewriter) const override {
-    // auto & converter = *getTypeConverter();
-    // (void)rewriter.replaceOpWithNewOp<::mlir::UnrealizedConversionCastOp>(
-    // op, converter.conveMRType(op.getType()), adaptor.getOperands());
     rewriter.replaceOp(op, adaptor.getTensor());
     return ::mlir::success();
   }
@@ -131,13 +127,6 @@ struct ExtractTensorLowering
   matchAndRewrite(::imex::ptensor::ExtractMemRefOp op,
                   ::imex::ptensor::ExtractMemRefOp::Adaptor adaptor,
                   ::mlir::ConversionPatternRewriter &rewriter) const override {
-    // std::cerr << "op: "; op.dump(); std::cerr << std::endl;
-    // std::cerr << "oinput: "; op.getInput().dump(); std::cerr << std::endl;
-    // std::cerr << "ainput: "; adaptor.getInput().dump(); std::cerr <<
-    // std::endl; std::cerr << "odefop: "; if(op.getInput().getDefiningOp())
-    // op.getInput().getDefiningOp()->dump(); std::cerr << std::endl; std::cerr
-    // << "adefop: "; if(adaptor.getInput().getDefiningOp())
-    // adaptor.getInput().getDefiningOp()->dump(); std::cerr << std::endl;
     auto inpOp =
         adaptor.getInput().getDefiningOp<::mlir::UnrealizedConversionCastOp>();
     if (!inpOp) { // block arg or similar
@@ -152,18 +141,11 @@ struct ExtractTensorLowering
                 inpOp.getOperands()
                     .front()
                     .getDefiningOp<::mlir::UnrealizedConversionCastOp>()) {
-          std::cerr << "inpOp: ";
-          inpOp->dump();
-          std::cerr << "\tdefOp: ";
-          defOp->dump();
           inpOp = defOp;
         } else
           break;
       }
       assert(inpOp);
-      // assert(inpOp.getOperands().size() == 4);
-      // std::cerr << "repl: "; inpOp.dump(); std::cerr << " ";
-      // inpOp.getOperands()[0].dump(); std::cerr << std::endl;
       assert(inpOp.getOperands().front().getType().isa<::mlir::MemRefType>());
       rewriter.replaceOp(op, inpOp.getOperands()[0]);
     }
@@ -171,7 +153,8 @@ struct ExtractTensorLowering
   }
 };
 
-/// Convert PTensor's subview to tensor::subview.
+/// Convert PTensor's subview to memref::subview.
+/// Adjusted from NTensor
 struct SubviewLowering
     : public ::mlir::OpConversionPattern<::imex::ptensor::SubviewOp> {
   using OpConversionPattern::OpConversionPattern;
@@ -218,6 +201,8 @@ struct SubviewLowering
   }
 };
 
+/// Convert PTensor's LoadOp to memref::LoadOp.
+/// Adjusted from NTensor
 struct LoadOpLowering
     : public mlir::OpConversionPattern<imex::ptensor::LoadOp> {
   using OpConversionPattern::OpConversionPattern;
@@ -392,8 +377,8 @@ static void yield(mlir::OpBuilder &builder, ::mlir::Location loc,
 
 /// Trivial binop builders have simple equivalents in Arith.
 /// The Arith ops are accepted as template arguments, one for ints and one for
-/// floats. Currently only integers and floats are supported. Currently unsigned
-/// int ops are not supported.
+/// floats. Currently only integers and floats are supported.
+/// Currently unsigned int ops are not supported.
 template <typename IOP, typename FOP = void>
 static BodyType buildTrivial(::mlir::Type typ) {
   return [typ](mlir::OpBuilder &builder, ::mlir::Location loc,
@@ -424,6 +409,7 @@ static BodyType buildTrivial(::mlir::Type typ) {
 
 /// get a body builder for given binary operation and result type.
 /// Accepts a result type to insert a cast after the operation if needed
+/// FIXME: add missing ops
 static BodyType getBodyBuilder(::imex::ptensor::EWBinOpId binOp,
                                ::mlir::Type typ) {
   switch (binOp) {
@@ -531,10 +517,12 @@ struct EWBinOpLowering
     auto tensor = createEmptyTensor(rewriter, loc, elTyp, resShapeV);
     auto resMRTyp = getMemRefType(rewriter.getContext(), rank, elTyp);
 
-    // Get signless operands into vec
-    // llvm::SmallVector<mlir::Value, 2> oprnds = { lhsTnsr, rhsTnsr };
-
-    // create binop as linalg::generic
+    // we need affine maps for linalg::generic
+    // as long as we have no proper support for rank-reduced sizes above Linalg,
+    // we can handle only
+    //   - explicitly rank-reduced inputs (such as explicit 0d tensors)
+    //   - shapes with static dim-sizes of 1
+    // FIXME: Dynamic dim-sizes of 1 are not properly handled
     ::mlir::SmallVector<::mlir::AffineExpr> lhsExprs, rhsExprs, resExprs;
     for (int i = 0; i < lhsRank; ++i) {
       lhsExprs.emplace_back(lhsMRTyp.getDimSize(i) == 1
@@ -552,17 +540,12 @@ struct EWBinOpLowering
     auto maps =
         ::mlir::AffineMap::inferFromExprList({lhsExprs, rhsExprs, resExprs});
 
-#if 0
-    const ::mlir::AffineMap maps[] = {
-        ::mlir::AffineMap::getMinorIdentityMap(rank, lhsRank,
-                                               rewriter.getContext()),
-        ::mlir::AffineMap::getMinorIdentityMap(rank, rhsRank,
-                                               rewriter.getContext()),
-        ::mlir::AffineMap::getMultiDimIdentityMap(rank, rewriter.getContext())};
-#endif
+    // we just make all dims parallel
     llvm::SmallVector<mlir::utils::IteratorType> iterators(
         rank, ::mlir::utils::IteratorType::parallel);
 
+    // get the body builder for our binop and create genericop
+    // FIXME: make createParFor ready for this
     const ::imex::ptensor::EWBinOpId binOpId =
         (::imex::ptensor::EWBinOpId)adaptor.getOp()
             .cast<::mlir::IntegerAttr>()

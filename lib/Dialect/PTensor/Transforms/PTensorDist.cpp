@@ -1,6 +1,6 @@
 //===- PTensorDist.cpp - PTensorToDist Transform  ---------------*- C++ -*-===//
 //
-// Copyright 2022 Intel Corporation
+// Copyright 2023 Intel Corporation
 // Part of the IMEX Project, under the Apache License v2.0 with LLVM Exceptions.
 // See https://llvm.org/LICENSE.txt for license information.
 // SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
@@ -12,7 +12,8 @@
 /// PTensor and Dist dialects.
 ///
 /// PTensor operations will stay untouched unless operands are distributed
-/// PTensors. PTensors are converted do DistTensorTypes by creation functions,
+/// PTensors or creation functions.
+/// PTensors are converted do DistTensorTypes by creation functions,
 /// for example by reacting on an input argument 'team'. When creating a
 /// DistTensor additional information is attached which provides information to
 /// perform distributed operations, such as shape and offsets of the local
@@ -112,10 +113,8 @@ struct DistExtractMemRefOpRWP
   }
 };
 
-/// Rewriting ::imex::ptensor::SubviewOp
-/// 1. Compute local slice and offsets of dst
-/// 2. Apply SubviewOp to subslice and local partition
-/// 3. Create new DistTensor
+/// Rewriting ::imex::ptensor::SubviewOp by simply replacing
+/// with dist::SubviewOp if input is a DistTensor.
 struct DistSubviewOpRWP
     : public RecOpRewritePattern<::imex::ptensor::SubviewOp> {
   using RecOpRewritePattern::RecOpRewritePattern;
@@ -130,10 +129,7 @@ struct DistSubviewOpRWP
     auto outDTTyp = op.getType().dyn_cast<::imex::dist::DistTensorType>();
     auto outPTTyp = op.getType().dyn_cast<::imex::ptensor::PTensorType>();
 
-    if ((!inpDTTyp && outPTTyp) ||
-        outDTTyp) { //} || (op->hasOneUse() &&
-                    // op->user_begin()->getName().getStringRef()
-                    //== "dist.init_dist_tensor")) {
+    if ((!inpDTTyp && outPTTyp) || outDTTyp) {
       return ::mlir::failure();
     }
 
@@ -148,6 +144,8 @@ struct DistSubviewOpRWP
   }
 };
 
+/// Rewriting ::imex::ptensor::LoadOp by simply replacing
+/// with dist::LoadOp if input is a DistTensor.
 struct DistLoadOpRWP : public RecOpRewritePattern<::imex::ptensor::LoadOp> {
   using RecOpRewritePattern::RecOpRewritePattern;
 
@@ -170,8 +168,8 @@ struct DistLoadOpRWP : public RecOpRewritePattern<::imex::ptensor::LoadOp> {
 };
 
 /// Rewriting ::imex::ptensor::InsertSliceOp
-/// 1. Compute local slice of dst
-/// 2. Get local PTensors (dst and src)
+/// 1. Compute local slice of dst (target part)
+/// 2. Repartition input to computed target part
 /// 3. Apply to ::imex::ptensor::InsertSliceOp
 struct DistInsertSliceOpRWP
     : public RecOpRewritePattern<::imex::ptensor::InsertSliceOp> {
@@ -202,9 +200,6 @@ struct DistInsertSliceOpRWP
     auto tSlcSizes = tSlice.getTSizes();
 
     // Repartition source
-    // notice: the source should have the same size as the target
-    //         this means there is no additional global offset in the source
-    //         so there is no need to incorporate global offsets or alike
     auto rpSrc = createRePartition(loc, rewriter, src, tSlcOffs, tSlcSizes);
 
     rewriter.replaceOpWithNewOp<::imex::dist::InsertSliceOp>(
@@ -302,6 +297,7 @@ struct DistCreateOpRWP : public RecOpRewritePattern<::imex::ptensor::CreateOp> {
 
 /// Rewrite ::imex::ptensor::EWBinOp to get a distributed ewbinop
 /// if operands are distributed.
+/// Repartitions input tensors as needed.
 /// Create global, distributed output tensor with same shape as operands.
 /// The local partitions of operands (e.g. RankedTensor) are wrapped in
 /// non-distributed PTensors and re-applied to ewbinop.
@@ -332,18 +328,8 @@ struct DistEWBinOpRWP : public RecOpRewritePattern<::imex::ptensor::EWBinOp> {
 
     auto loc = op.getLoc();
 
-    // repartition if necessary
-
-#if 0
-    ::mlir::ValueRange tOffs, tSizes;
-
-    if(lhsDTTyp.getPTensorType().getRank() > 0 || rhsDTTyp.getPTensorType().getRank() > 0) {
-      auto tPart = createLocalPartition(loc, rewriter, op.getLhs());
-      tOffs = tPart.getLOffsets();
-      tSizes = tPart.getLShape();
-    }
-#endif
-
+    // Repartition if necessary
+    // FIXME: this breaks with dim-sizes==1, even if statically known
     auto rbLhs =
         lhsDTTyp.getPTensorType().getRank() == 0
             ? op.getLhs()
@@ -424,14 +410,6 @@ struct PTensorDistPass : public ::imex::PTensorDistBase<PTensorDistPass> {
                    DistReductionOpRWP, DistExtractMemRefOpRWP, DistSubviewOpRWP,
                    DistInsertSliceOpRWP>(getContext(), patterns);
     (void)::mlir::applyPatternsAndFoldGreedily(this->getOperation(), patterns);
-
-    // groupOps<::imex::dist::SubviewOp>(
-    //     this->getAnalysis<::mlir::DominanceInfo>(), this->getOperation(),
-    //     [](::imex::dist::SubviewOp &op) { return true; },
-    //     [](::imex::dist::SubviewOp &op) { return op.getOperands(); },
-    //     [](::imex::dist::SubviewOp &, ::imex::dist::SubviewOp &) {
-    //       return false;
-    //     }, hasWriteBetween);
   }
 };
 

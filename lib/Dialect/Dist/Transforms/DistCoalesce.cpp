@@ -1,6 +1,6 @@
 //===- DistCoalesce.cpp - PTensorToDist Transform  -----*- C++ -*-===//
 //
-// Copyright 2022 Intel Corporation
+// Copyright 2023 Intel Corporation
 // Part of the IMEX Project, under the Apache License v2.0 with LLVM Exceptions.
 // See https://llvm.org/LICENSE.txt for license information.
 // SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
@@ -9,6 +9,27 @@
 ///
 /// \file
 /// This file implements transforms of the Dist dialect.
+///
+/// This pass tries to minimize the number of dist::RePartitionOps.
+/// Instead of creating a new copy for each repartition, it tries to combine
+/// multiple RePartitionOps into one. For this, it computes the local bounding
+/// box of several uses of repartitioned copies of the same base tensor. It
+/// replaces all matched RepartitionOps with one which provides the computed
+/// bounding box. Uses of the eliminated RePartitionOps get updated with th
+/// appropriate target part as originally used. Right now supported uses are
+/// SubviewOps and InsertSliceOps.
+///
+/// InsertSliceOps are special because they mutate data. Hence they serve as
+/// barriers across which no combination of RePartitionOps will happen.
+///
+/// Additionally, while most other ops do not request a special target part,
+/// InsertSliceOps request a target part on the incoming tensor. This target
+/// part gets back-propagated as far as possible, most importantly including
+/// EWBinOps.
+///
+/// Also, as part of this back-propagation, RePartitionOps between two EWBinOps,
+/// e.g. those which come from one EWBinOp and have only one use and that in a
+/// another EWBinOp get simply erased.
 ///
 //===----------------------------------------------------------------------===//
 
@@ -34,13 +55,6 @@ namespace dist {
 namespace {
 
 // *******************************
-// ***** Some helper functions ***
-// *******************************
-
-// Return number of ranks/processes in given team/communicator
-// uint64_t idtr_nprocs(int64_t team);
-
-// *******************************
 // ***** Pass infrastructure *****
 // *******************************
 
@@ -49,6 +63,7 @@ struct DistCoalescePass : public ::imex::DistCoalesceBase<DistCoalescePass> {
 
   DistCoalescePass() = default;
 
+  // returns true if a Value is defined by any of the given operation types
   template <typename T, typename... Ts>
   static bool isDefByAnyOf(const ::mlir::Value &val) {
     if (val.getDefiningOp<T>())
@@ -59,6 +74,7 @@ struct DistCoalescePass : public ::imex::DistCoalesceBase<DistCoalescePass> {
       return false;
   }
 
+  // returns true if an operation is of any of the given types
   template <typename T, typename... Ts>
   static bool isAnyOf(const ::mlir::Operation *op) {
     if (::mlir::dyn_cast<T>(op))
@@ -69,9 +85,9 @@ struct DistCoalescePass : public ::imex::DistCoalesceBase<DistCoalescePass> {
       return false;
   }
 
-  using rb_info = ::std::pair<::mlir::Operation *,
-                              ::mlir::SmallVector<::imex::dist::SubviewOp>>;
-
+  /// Follow def-chain of given Value until hitting a creation function
+  /// or EWBinOp
+  /// @return defining op
   ::mlir::Operation *getBase(const ::mlir::Value &val) {
     if (auto op = val.getDefiningOp<::imex::dist::InitDistTensorOp>()) {
       auto pt = op.getPTensor();
@@ -94,6 +110,8 @@ struct DistCoalescePass : public ::imex::DistCoalesceBase<DistCoalescePass> {
     }
   }
 
+  /// return true if given op comes from a EWBinOp and has another EWBinOP
+  /// as its single user.
   bool is_temp(::imex::dist::RePartitionOp &op) {
     if (op.getTargetSizes().size() == 0 && op->hasOneUse() &&
         ::mlir::isa<::imex::ptensor::EWBinOp>(*op->user_begin()) &&
@@ -103,6 +121,8 @@ struct DistCoalescePass : public ::imex::DistCoalesceBase<DistCoalescePass> {
     return false;
   }
 
+  /// update a SubviewOp with a target part
+  /// create and return a new op if the SubviewOp has more than one use.
   ::mlir::Operation *updateTargetPart(::mlir::IRRewriter &builder,
                                       ::imex::dist::SubviewOp op,
                                       const ::mlir::ValueRange &tOffs,
@@ -154,7 +174,7 @@ struct DistCoalescePass : public ::imex::DistCoalesceBase<DistCoalescePass> {
     return nullptr;
   }
 
-  // @return if op1 can be moved directly after op2
+  /// @return if op1 can be moved directly after op2
   bool canMoveAfter(::mlir::DominanceInfo &dom, ::mlir::Operation *op1,
                     ::mlir::Operation *op2) {
     assert(op2 != op1);
@@ -169,9 +189,9 @@ struct DistCoalescePass : public ::imex::DistCoalesceBase<DistCoalescePass> {
     return true;
   }
 
-  // entry point for back propagation of target parts, starting with
-  // RePartitionOp Verifies that defining ops are what we assume/can handle and
-  // then starts actual back propagation
+  /// entry point for back propagation of target parts, starting with
+  /// RePartitionOp. Verifies that defining ops are what we assume/can handle.
+  /// Then starts actual back propagation
   uint64_t backPropagatePart(
       ::mlir::IRRewriter &builder, ::mlir::DominanceInfo &dom,
       ::imex::dist::RePartitionOp rpOp, ::mlir::Operation *&nOp,
@@ -201,11 +221,11 @@ struct DistCoalescePass : public ::imex::DistCoalesceBase<DistCoalescePass> {
     return backPropagatePart(builder, rpOp, offs, szs, nOp, toDelete);
   }
 
-  // the actual back propagation of target parts
-  // if meeting a supported op, recursively gets defining ops and back
-  // propagates as it follows only supported ops, all other ops act as
-  // propagation barriers (e.g. insertsliceops) on the way it updates target
-  // info on subviewops and marks repartitionops for elimination
+  /// The actual back propagation of target parts
+  /// if meeting a supported op, recursively gets defining ops and back
+  /// propagates as it follows only supported ops, all other ops act as
+  /// propagation barriers (e.g. InsertSliceOps) on the way it updates target
+  /// info on SubviewOps and marks RePartitionOps for elimination
   uint64_t backPropagatePart(
       ::mlir::IRRewriter &builder, ::mlir::Operation *op,
       const ::mlir::ValueRange &tOffs, const ::mlir::ValueRange &tSizes,
@@ -239,34 +259,34 @@ struct DistCoalescePass : public ::imex::DistCoalesceBase<DistCoalescePass> {
                  : n;
   }
 
-  // This pass tries to combine multiple repartitionops into one.
-  // Dependent operations (like subviewop) get adequately annotated.
+  // This pass tries to combine multiple RePartitionOps into one.
+  // Dependent operations (like SubviewOp) get adequately annotated.
   //
-  // The basic idea is to compute a the bounding box of several repartitionops
-  // and use it for a single repartition. Dependent subviewops can then
+  // The basic idea is to compute a the bounding box of several RePartitionOps
+  // and use it for a single repartition. Dependent SubviewOps can then
   // extract the appropriate part from that bounding box without further
   // communication/repartitioning.
   //
   // 1. back-propagation of explicit target-parts
-  // 2. group and move subviewops
-  // 3. create base repartitionops and update dependent subviewops
+  // 2. group and move SubviewOps
+  // 3. create base RePartitionOps and update dependent SubviewOps
   void runOnOperation() override {
 
     auto root = this->getOperation();
     ::mlir::IRRewriter builder(&getContext());
 
-    // back-propagate targets from repartitionops
+    // back-propagate targets from RePartitionOps
 
     ::mlir::SmallVector<::imex::dist::RePartitionOp> rpToElimNew;
     ::mlir::SmallVector<::imex::dist::RePartitionOp> rpOps;
 
-    // store all repartitionops with target in vector
+    // store all RePartitionOps with target in vector
     root->walk([&](::mlir::Operation *op) {
       builder.setInsertionPoint(op);
       return ::mlir::WalkResult::interrupt();
     });
 
-    // store all repartitionops with target in vector
+    // store all RePartitionOps with target in vector
     root->walk([&](::imex::dist::RePartitionOp op) {
       if (!op.getTargetOffsets().empty()) {
         rpOps.emplace_back(op);
@@ -282,12 +302,12 @@ struct DistCoalescePass : public ::imex::DistCoalesceBase<DistCoalescePass> {
       assert(!nOp);
     }
 
-    // eliminate no longer needed repartitionops
+    // eliminate no longer needed RePartitionOps
     for (auto rp : rpToElimNew) {
       builder.replaceOp(rp, rp.getBase());
     }
 
-    // find insertslice, subview and repartition ops on the same base
+    // find InsertSliceOp, SubviewOp and RePartitionOps on the same base
     // pointer
     // opsGroups holds independent partial operation sequences operating on a
     // specific base pointer
@@ -325,7 +345,7 @@ struct DistCoalescePass : public ::imex::DistCoalesceBase<DistCoalescePass> {
       auto pRank = createPRank(base->getLoc(), builder, team);
 
       // find groups operating on the same base, groups are separated by write
-      // operations (insertsliceops for now)
+      // operations (InsertSliceOps for now)
       for (auto j = grpP.second.begin(); j != grpP.second.end(); ++j) {
         ::mlir::SmallVector<::mlir::Operation *> grp;
         ::mlir::SmallVector<::mlir::Operation *> unhandled;

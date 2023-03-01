@@ -1,6 +1,6 @@
 //===- DistOps.td - Dist dialect  --------------------------*- tablegen -*-===//
 //
-// Copyright 2022 Intel Corporation
+// Copyright 2023 Intel Corporation
 // Part of the IMEX Project, under the Apache License v2.0 with LLVM Exceptions.
 // See https://llvm.org/LICENSE.txt for license information.
 // SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
@@ -106,6 +106,7 @@ def InitDistTensorOp : Dist_Op<"init_dist_tensor", [SameVariadicOperandSize, Pur
         The attached PTensor is the local partiton of the distributed PTensor.
         The distributed meta information about a new PTensor provides
           - the global shape
+          - balanced flag
           - the process-local offsets
           - the distributed team
     }];
@@ -308,6 +309,8 @@ def LocalBoundingBoxOp : Dist_Op<"local_bounding_box", [AttrSizedOperandSegments
 def RePartitionOp : Dist_Op<"repartition", [AttrSizedOperandSegments, Pure]> {
     let summary = "Repartition a tensor so that each process hold data locally needed by given views.";
     let description = [{
+        Creates a new DistTensor by repartitioning the input tensor. It is assumed to be a collective call
+        and participating processes report the target part they locally need.
     }];
 
     let arguments = (ins Dist_Tensor:$base, Variadic<Index>:$target_offsets, Variadic<Index>:$target_sizes);

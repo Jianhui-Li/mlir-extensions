@@ -1,6 +1,6 @@
 //===- DistToStandard.cpp - DistToStandard conversion  ----------*- C++ -*-===//
 //
-// Copyright 2022 Intel Corporation
+// Copyright 2023 Intel Corporation
 // Part of the IMEX Project, under the Apache License v2.0 with LLVM Exceptions.
 // See https://llvm.org/LICENSE.txt for license information.
 // SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
@@ -9,7 +9,7 @@
 ///
 /// \file
 /// This file implements the DistToStandard conversion, converting the Dist
-/// dialect to standard dialects.
+/// dialect to standard dialects (including PTensor).
 /// Some operations get converted to runtime calls, others with standard
 /// MLIR operations from dialects like arith and tensor.
 ///
@@ -65,6 +65,11 @@ inline void requireFunc(::mlir::Location &loc, ::mlir::OpBuilder &builder,
 // ***** Individual patterns *****
 // *******************************
 
+/// Convert a global dist::SubviewOP to ptensor::SubViewOp on the local data.
+/// Potentially computes local part if no target part is provided.
+/// Even though the op accepts static offs/sizes all computation
+/// is done on values - only static dim-sizes of 1 are properly propagated.
+/// Static strides are always propagated to PTensor.
 struct SubviewOpConverter
     : public ::mlir::OpConversionPattern<::imex::dist::SubviewOp> {
   using ::mlir::OpConversionPattern<
@@ -147,6 +152,7 @@ struct SubviewOpConverter
   }
 };
 
+// Adjusted from NTensor
 struct LoadOpConverter
     : public ::mlir::OpConversionPattern<::imex::dist::LoadOp> {
   using ::mlir::OpConversionPattern<::imex::dist::LoadOp>::OpConversionPattern;
@@ -191,13 +197,16 @@ struct LoadOpConverter
 
     // create local view
     auto lTnsr = createLocalTensorOf(loc, rewriter, src);
-    auto lView = rewriter.replaceOpWithNewOp<::imex::ptensor::LoadOp>(
+    rewriter.replaceOpWithNewOp<::imex::ptensor::LoadOp>(
         op, op.getResult().getType(), lTnsr, lSlcOffsets);
 
     return ::mlir::success();
   }
 };
 
+/// Convert a global dist::InsertSliceOP to ptensor::InsertSliceOp on the local
+/// data. Assumes that the input is properly partitioned: the target part or of
+/// none provided the default partitioning.
 struct InsertSliceOpConverter
     : public ::mlir::OpConversionPattern<::imex::dist::InsertSliceOp> {
   using ::mlir::OpConversionPattern<
@@ -248,29 +257,6 @@ struct InsertSliceOpConverter
     auto lDst = createLocalTensorOf(loc, rewriter, dst);
     auto lSrc = createLocalTensorOf(loc, rewriter, src);
 
-#if 0
-    auto sMemRef = rewriter.create<::imex::ptensor::ExtractMemRefOp>(loc, srcPTTyp.getPTensorType().getMemRefType(), lSrc);
-    auto memrefType = ::mlir::UnrankedMemRefType::get(rewriter.getI64Type(), {});
-    auto srcUMR = rewriter.create<mlir::memref::CastOp>(loc, memrefType, sMemRef);
-    rewriter.create<::mlir::func::CallOp>(loc, "printMemrefI64", ::mlir::TypeRange(), srcUMR.getResult());
-    auto zero = createIndex(loc, rewriter, 0);
-    auto xxx = createLocalOffsetsOf(loc, rewriter, src);
-    auto dMemRef = rewriter.create<::imex::ptensor::ExtractMemRefOp>(loc, dstPTTyp.getPTensorType().getMemRefType(), lDst);
-    auto dMeta = rewriter.create<::mlir::memref::ExtractStridedMetadataOp>(loc, dMemRef);
-    auto sMeta = rewriter.create<::mlir::memref::ExtractStridedMetadataOp>(loc, sMemRef);
-    (void)
-    rewriter.create<::mlir::func::CallOp>(
-        loc, "_idtr_extractslice", ::mlir::TypeRange(),
-        ::mlir::ValueRange({createExtractPtrFromMemRefFromValues(rewriter, loc, lOffs),
-                            createExtractPtrFromMemRefFromValues(rewriter, loc, xxx),
-                            createExtractPtrFromMemRefFromValues(rewriter, loc, slcStrides),
-                            createExtractPtrFromMemRefFromValues(rewriter, loc, tOffs),
-                            createExtractPtrFromMemRefFromValues(rewriter, loc, tSizes),
-                            createExtractPtrFromMemRefFromValues(rewriter, loc, lSlcOffsets),
-                            createExtractPtrFromMemRefFromValues(rewriter, loc, {dMeta.getOffset(), sMeta.getOffset()}),
-                            zero})
-    );
-#endif
     // apply to InsertSliceOp
     rewriter.replaceOpWithNewOp<::imex::ptensor::InsertSliceOp>(
         op, lDst, lSrc, lSlcOffsets, tSizes, slcStrides);
@@ -279,6 +265,8 @@ struct InsertSliceOpConverter
   }
 };
 
+/// Convert a global dist::EWBinOp to ptensor::EWBinOp on the local data.
+/// Assumes that the partitioning of the inputs are properly aligned.
 struct EWBinOpConverter
     : public ::mlir::OpConversionPattern<::imex::ptensor::EWBinOp> {
   using ::mlir::OpConversionPattern<
@@ -333,6 +321,7 @@ struct EWBinOpConverter
 };
 
 // RuntimePrototypesOp -> func.func ops
+// adding required function prototypes to the module level
 struct RuntimePrototypesOpConverter
     : public ::mlir::OpConversionPattern<::imex::dist::RuntimePrototypesOp> {
   using ::mlir::OpConversionPattern<
@@ -361,11 +350,9 @@ struct RuntimePrototypesOpConverter
     requireFunc(loc, rewriter, module, "_idtr_nprocs", {indexType},
                 {indexType});
     requireFunc(loc, rewriter, module, "_idtr_prank", {indexType}, {indexType});
-    requireFunc(
-        loc, rewriter, module, "_idtr_reduce_all",
-        // {getMemRefType(rewriter.getContext(), 0, dtype), dtypeType, opType},
-        // {::mlir::UnrankedMemRefType::get(dtype, {}), dtypeType, opType}, {});
-        {indexType, indexType, indexType, indexType, dtypeType, opType}, {});
+    requireFunc(loc, rewriter, module, "_idtr_reduce_all",
+                {indexType, indexType, indexType, indexType, dtypeType, opType},
+                {});
     requireFunc(loc, rewriter, module, "_idtr_repartition",
                 // rank, gShapePtr, dtype, lDataPtr, lOffsPtr, lShapePtr,
                 // lStridesPtr, offsPtr, szsPtr, outPtr, team
@@ -414,7 +401,8 @@ struct PRankOpConverter
   }
 };
 
-/// Erase ::imex::dist::InitDistTensorOp; it is a dummy op
+/// Replace ::imex::dist::InitDistTensorOp with unrealized_conversion_cast
+/// InitDistTensorOp is a dummy op used only for propagating dist infos
 struct InitDistTensorOpConverter
     : public ::mlir::OpConversionPattern<::imex::dist::InitDistTensorOp> {
   using ::mlir::OpConversionPattern<
@@ -431,6 +419,8 @@ struct InitDistTensorOpConverter
     auto rank = dtType.getPTensorType().getRank();
     auto lOffs = adaptor.getLOffsets();
     ::mlir::SmallVector<::mlir::Value> oprnds(3 + rank + lOffs.size());
+
+    // we use enum values to make sure we use the correct order in the cast
     oprnds[LTENSOR] = adaptor.getPTensor();
     oprnds[TEAM] = adaptor.getTeam();
     oprnds[BALANCED] =
@@ -455,6 +445,7 @@ struct InitDistTensorOpConverter
 /// Convert ::imex::dist::ExtractFromDistOp into respective operand of defining
 /// op. We assume the defining op is either InitDistTensorOp or it is an
 /// block-argument which was converted by a unrealized_conversion_cast.
+// we use enum values to make sure we use the correct order in the cast
 template <typename OP>
 struct ExtractFromDistOpConverter : public ::mlir::OpConversionPattern<OP> {
   using ::mlir::OpConversionPattern<OP>::OpConversionPattern;
@@ -562,6 +553,7 @@ struct ExtractFromDistOpConverter : public ::mlir::OpConversionPattern<OP> {
   }
 };
 
+// explicit instantiation with custom name for each meta data
 using GlobalShapeOfOpConverter =
     ExtractFromDistOpConverter<::imex::dist::GlobalShapeOfOp>;
 using LocalTensorOfOpConverter =
@@ -572,7 +564,8 @@ using TeamOfOpConverter = ExtractFromDistOpConverter<::imex::dist::TeamOfOp>;
 using IsBalancedOpConverter =
     ExtractFromDistOpConverter<::imex::dist::IsBalancedOp>;
 
-/// Convert ::imex::dist::LocalPartitionOp into shape and arith calls.
+/// Lowering ::imex::dist::LocalPartitionOp: Compute default partition
+/// for a given shape and number of processes.
 /// We currently assume evenly split data.
 struct LocalPartitionOpConverter
     : public ::mlir::OpConversionPattern<::imex::dist::LocalPartitionOp> {
@@ -612,8 +605,8 @@ struct LocalPartitionOpConverter
   }
 };
 
-// Compute local slice in dim 0, all other dims are not partitioned (yet)
-// return
+// Compute offset from local data to overlap of given slice
+// assuming the given target part
 struct LocalOffsetForTargetSliceOpConverter
     : public ::mlir::OpConversionPattern<
           ::imex::dist::LocalOffsetForTargetSliceOp> {
@@ -650,8 +643,11 @@ struct LocalOffsetForTargetSliceOpConverter
   }
 };
 
-// Compute local slice in dim 0, all other dims are not partitioned (yet)
-// return local memref of src
+// Compute the overlap of local data and global slice and return
+// as target part (global offset/size relative to requested slice)
+// Currently only dim0 is cut, hence offs/sizes of all other dims
+// will be identical to the ones of the requested slice
+// (e.g. same size and offset 0)
 struct LocalTargetOfSliceOpConverter
     : public ::mlir::OpConversionPattern<::imex::dist::LocalTargetOfSliceOp> {
   using ::mlir::OpConversionPattern<
@@ -738,35 +734,6 @@ struct LocalTargetOfSliceOpConverter
   }
 };
 
-#if 0
-    // check if requested slice start before local partition
-    auto startsBefore = slcOff.ult(lOff);
-    auto strOff = lOff - slcOff;
-    // (strOff / stride) * stride
-    auto nextMultiple = (strOff / slcStride) * slcStride;
-    // Check if local start is on a multiple of the new slice
-    auto isMultiple = nextMultiple.eq(strOff);
-    // stride - (strOff - nextMultiple)
-    auto off = slcStride - (strOff - nextMultiple);
-    // offset is either 0 if multiple or off
-    auto lDiff1 = isMultiple.select(zeroIdx, off);
-    // if view starts within our partition: (start-lOff)
-    auto lDiff2 = slcOff - lOff;
-    auto viewOff1 = startsBefore.select(lDiff1, lDiff2);
-    // except if slice/view before or behind local partition
-    auto viewOff0 = beforeLocal.select(zeroIdx, viewOff1);
-    // viewOff is the offset from local partition to slice's local start
-    auto viewOff = behindLocal.select(zeroIdx, viewOff0);
-    // min of lEnd and slice's end
-    auto theEnd = lEnd.min(slcEnd);
-    // range between local views start and end
-    auto lRange = (theEnd - viewOff) - lOff;
-    // number of elements in local view (range+stride-1)/stride
-    auto viewSize1 = (lRange + (slcStride - oneIdx)) / slcStride;
-    auto viewSize0 = beforeLocal.select(zeroIdx, viewSize1);
-    auto viewSize = behindLocal.select(zeroIdx, viewSize0);
-#endif // if 0
-
 /// Convert ::imex::dist::AllReduceOp into runtime call to "_idtr_reduce_all".
 /// Pass local RankedTensor as argument.
 /// Replaces op with new DistTensor.
@@ -809,6 +776,9 @@ struct AllReduceOpConverter
 };
 
 /// Convert ::imex::dist::LocalBoundingBoxOp
+/// Takes incoming (optional) bounding box and extends if provided target part
+/// starts earlier and/or ends later.
+/// bounding box and target parts are represented as offs and sizes.
 struct LocalBoundingBoxOpConverter
     : public ::mlir::OpConversionPattern<::imex::dist::LocalBoundingBoxOp> {
   using ::mlir::OpConversionPattern<
@@ -868,6 +838,9 @@ struct LocalBoundingBoxOpConverter
 };
 
 /// Convert ::imex::dist::RePartitionOp
+/// Creates a new tensor from the input tensor by re-partitioning it
+/// according to the target part (or default). The repartitioning
+/// itself happens in a library call.
 struct RePartitionOpConverter
     : public ::mlir::OpConversionPattern<::imex::dist::RePartitionOp> {
   using ::mlir::OpConversionPattern<
@@ -1018,6 +991,9 @@ struct ConvertDistToStandardPass
            ::mlir::SmallVectorImpl<::mlir::Value> &values) {
           const auto off = values.size();
           auto rank = resultType.getPTensorType().getRank();
+
+          // we use enum values to make sure we use the correct order in the
+          // cast
           values.resize(off + DIST_META_LAST - (rank ? 0 : 2));
           values[LTENSOR + off] = createLocalTensorOf(loc, builder, value);
           values[TEAM + off] = createTeamOf(loc, builder, value);

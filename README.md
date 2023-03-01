@@ -189,7 +189,7 @@ clang++ test.o {path}/libmlir_runner_utils.so {path}/libmlir_c_runner_utils.so {
 ze_tracer ./test
 ```
 
-## Misc
+## Dist/PTensor Misc
 - Not using LoadOp. Instead, everything is a SubviewOp. Any size-1 dim must be annotated with static size 1.
   - right now we can only broadcast size-1 dims if their extent is statically known (to be 1)
 - Generally, rank reduction of SubviewOp needs overhaul.
@@ -198,3 +198,4 @@ ze_tracer ./test
   - Even if SubviewOp resulted in rank-reduced tensors, we cannot view into our local data since the element might be remote.
   - To follow existing mechanisms (e.g. target parts) we'd basically need to duplicate the entire tensor.
   - We probably need some special feature to hold duplicates of slices with only one element on the distributed axis.
+- PTensor/dist tests can be run (without GPU tests etc) uwing `cmake --build . --target check-ptensor`

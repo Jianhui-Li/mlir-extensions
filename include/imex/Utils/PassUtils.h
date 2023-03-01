@@ -1,6 +1,6 @@
 //===- PassUtils.h - Pass Utility Functions --------------------*- C++ -*-===//
 //
-// Copyright 2022 Intel Corporation
+// Copyright 2023 Intel Corporation
 // Part of the IMEX Project, under the Apache License v2.0 with LLVM Exceptions.
 // See https://llvm.org/LICENSE.txt for license information.
 // SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
@@ -116,6 +116,8 @@ inline auto getTensorType(::mlir::MLIRContext *ctxt, int64_t rank,
       elType); //, layout);
 }
 
+/// combine dynamic and static sizes (as used by SubviewOps) into a
+/// single ValueRange (vecotr of values)
 inline ::mlir::SmallVector<::mlir::Value>
 getMixedAsValues(const ::mlir::Location &loc, ::mlir::OpBuilder &builder,
                  const ::mlir::ValueRange &dyns,
@@ -130,6 +132,8 @@ getMixedAsValues(const ::mlir::Location &loc, ::mlir::OpBuilder &builder,
   return out;
 }
 
+/// similar to mlir::decomposeMixedValues but converting const values tot
+/// statics
 inline void
 dispatchIndexValues(const ::mlir::ValueRange &sizes,
                     ::mlir::SmallVectorImpl<::mlir::Value> &dynamicVec,
