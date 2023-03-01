@@ -114,7 +114,7 @@ def InitDistTensorOp : Dist_Op<"init_dist_tensor", [SameVariadicOperandSize, Pur
     let results = (outs Dist_Tensor);
 
     let assemblyFormat = [{
-        $p_tensor $team $balanced $g_shape oilist(`offsets` $l_offsets) attr-dict `:` qualified(type(operands)) `to` `(`qualified(type(results))`)`
+        $p_tensor $team $balanced $g_shape oilist(`offsets` $l_offsets) attr-dict `:` qualified(type(operands)) `to` qualified(type(results))
     }];
 
     let builders = [
@@ -266,7 +266,7 @@ def LocalTargetOfSliceOp : Dist_Op<"local_target_of_slice",
     let results = (outs Variadic<Index>:$t_offsets, Variadic<Index>:$t_sizes);
 
     let assemblyFormat = [{
-        $d_tensor `[` $offsets `]``[` $sizes `]``[` $strides `]` attr-dict qualified(type($d_tensor)) `to` `(`qualified(type(results))`)`
+        $d_tensor `[` $offsets `]``[` $sizes `]``[` $strides `]` attr-dict `:` qualified(type($d_tensor)) `to` qualified(type(results))
     }];
 
     let builders = [
@@ -290,7 +290,7 @@ def LocalBoundingBoxOp : Dist_Op<"local_bounding_box", [AttrSizedOperandSegments
     let results = (outs Variadic<Index>:$result_offsets, Variadic<Index>:$result_sizes);
 
     let assemblyFormat = [{
-        $base `[` $offsets `]``[` $sizes `]``[` $strides `]` `[` $target_offsets `]``[` $target_sizes `]` oilist(`bboffs` $b_b_offsets | `bb_sizes` $b_b_sizes) attr-dict qualified(type($base)) `to` `(`qualified(type(results))`)`
+        $base `[` $offsets `]``[` $sizes `]``[` $strides `]` `[` $target_offsets `]``[` $target_sizes `]` oilist(`bboffs` $b_b_offsets | `bb_sizes` $b_b_sizes) attr-dict `:` qualified(type($base)) `to` qualified(type(results))
     }];
 
     let builders = [
@@ -317,7 +317,7 @@ def RePartitionOp : Dist_Op<"repartition", [AttrSizedOperandSegments, Pure]> {
     let results = (outs Dist_Tensor);
 
     let assemblyFormat = [{
-        $base oilist(`loffs` $target_offsets | `lsizes` $target_sizes) attr-dict `:` `(`qualified(type(operands))`)` `to` `(`qualified(type(results))`)`
+        $base oilist(`loffs` $target_offsets | `lsizes` $target_sizes) attr-dict `:` qualified(type(operands)) `to` qualified(type(results))
     }];
 
     let builders = [
@@ -345,9 +345,6 @@ def LocalToGlobalOp : Dist_Op<"local_to_global", [Pure]> {
             build($_builder, $_state, ::mlir::TypeRange(rt), d_tensor, lindices);
         }]>,
     ];
-    //   let assemblyFormat = [{
-    //     $d_tensor attr-dict `:` qualified(type($source)) `to` `(`qualified(type(results))`)`
-    //   }];
 }
 
 def AllReduceOp : Dist_Op<"allreduce", []> {

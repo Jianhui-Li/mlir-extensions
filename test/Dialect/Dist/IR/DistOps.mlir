@@ -28,7 +28,7 @@ func.func @test_prank(%arg0: index) -> index {
 
 // -----
 func.func @test_init_dist_tensor(%pt: !ptensor.ptensor<?xi64>, %team: i64, %gshape: index, %loffs: index) -> !dist.dtensor<<?xi64>> {
-    %1 = dist.init_dist_tensor %pt %team 1 %gshape offsets %loffs : !ptensor.ptensor<?xi64>, i64, index, index to (!dist.dtensor<<?xi64>>)
+    %1 = dist.init_dist_tensor %pt %team 1 %gshape offsets %loffs : !ptensor.ptensor<?xi64>, i64, index, index to !dist.dtensor<<?xi64>>
     return %1 : !dist.dtensor<<?xi64>>
 }
 // CHECK-LABEL: func.func @test_init_dist_tensor(%arg0: !ptensor.ptensor<?xi64>, %arg1: i64, %arg2: index, %arg3: index) -> !dist.dtensor<<?xi64>> {
@@ -68,7 +68,7 @@ func.func @test_allreduce(%arg0: memref<i64>) -> memref<i64> {
 func.func @test_local_target_of_slice(%arg0: !dist.dtensor<<?xi64>>) -> (index, index) {
     %c0 = arith.constant 0 : index
     %c3 = arith.constant 3 : index
-    %l_offsets, %l_sizes = dist.local_target_of_slice %arg0[%c0] [%c3] [%c3] !dist.dtensor<<?xi64>> to (index, index)
+    %l_offsets, %l_sizes = dist.local_target_of_slice %arg0[%c0] [%c3] [%c3] : !dist.dtensor<<?xi64>> to index, index
     return %l_offsets, %l_sizes : index, index
 }
 // CHECK-LABEL: @test_local_target_of_slice
@@ -77,7 +77,7 @@ func.func @test_local_target_of_slice(%arg0: !dist.dtensor<<?xi64>>) -> (index, 
 
 // -----
 func.func @test_repartition(%arg0: !dist.dtensor<<?xi64>>) -> (!dist.dtensor<<?xi64>>) {
-    %0 = dist.repartition %arg0 : (!dist.dtensor<<?xi64>>) to(!dist.dtensor<<?xi64>>)
+    %0 = dist.repartition %arg0 : !dist.dtensor<<?xi64>> to !dist.dtensor<<?xi64>>
     return %0 : !dist.dtensor<<?xi64>>
 }
 // CHECK-LABEL: @test_repartition

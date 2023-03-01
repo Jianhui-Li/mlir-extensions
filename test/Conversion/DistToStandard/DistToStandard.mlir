@@ -30,7 +30,7 @@ module {
 module {
     "dist.runtime_prototypes"() : () -> ()
     func.func @test_init_dist_tensor(%pt: !ptensor.ptensor<?xi64>, %team: index, %gshape: index, %loffs: index) -> !dist.dtensor<<?xi64>> {
-        %1 = dist.init_dist_tensor %pt %team 1 %gshape offsets %loffs : !ptensor.ptensor<?xi64>, index, index, index to(!dist.dtensor<<?xi64>>)
+        %1 = dist.init_dist_tensor %pt %team 1 %gshape offsets %loffs : !ptensor.ptensor<?xi64>, index, index, index to !dist.dtensor<<?xi64>>
         return %1 : !dist.dtensor<<?xi64>>
     }
 }
@@ -66,7 +66,7 @@ module {
 // -----
 module {
     func.func @test_local_target_of_slice(%arg0: !dist.dtensor<<?xi64>>, %c0 : index, %c3 : index) -> (index, index) {
-        %l_offsets, %l_sizes = dist.local_target_of_slice %arg0[%c0] [%c3] [%c3] !dist.dtensor<<?xi64>> to (index, index)
+        %l_offsets, %l_sizes = dist.local_target_of_slice %arg0[%c0] [%c3] [%c3] : !dist.dtensor<<?xi64>> to index, index
         return %l_offsets, %l_sizes : index, index
     }
 }
@@ -89,7 +89,7 @@ func.func @test_0d_inout(%arg0: !dist.dtensor<<i64>>, %arg1: !dist.dtensor<<i64>
   %1 = "dist.local_tensor_of"(%arg1) : (!dist.dtensor<<i64>>) -> !ptensor.ptensor<i64>
   %2 = "ptensor.ewbin"(%0, %1) {op = 23 : i32} : (!ptensor.ptensor<i64>, !ptensor.ptensor<i64>) -> !ptensor.ptensor<i64>
   %3 = "dist.team_of"(%arg0) : (!dist.dtensor<<i64>>) -> index
-  %4 = dist.init_dist_tensor %2 %3 1 : !ptensor.ptensor<i64>, index to (!dist.dtensor<<i64>>)
+  %4 = dist.init_dist_tensor %2 %3 1 : !ptensor.ptensor<i64>, index to !dist.dtensor<<i64>>
   return %4 : !dist.dtensor<<i64>>
 }
 // CHECK-LABEL: func.func @test_0d_inout(%arg0: !ptensor.ptensor<i64>, %arg1: index, %arg2: index, %arg3: !ptensor.ptensor<i64>, %arg4: index, %arg5: index) -> (!ptensor.ptensor<i64>, index, index) {
@@ -101,7 +101,7 @@ func.func @test_0d_inout(%arg0: !dist.dtensor<<i64>>, %arg1: !dist.dtensor<<i64>
 module {
     "dist.runtime_prototypes"() : () -> ()
     func.func @test_repartition(%arg0: !dist.dtensor<<?x?xi64>>) -> !dist.dtensor<<?x?xi64>> {
-    %0 = dist.repartition %arg0 : (!dist.dtensor<<?x?xi64>>) to (!dist.dtensor<<?x?xi64>>)
+    %0 = dist.repartition %arg0 : !dist.dtensor<<?x?xi64>> to !dist.dtensor<<?x?xi64>>
     return %0 : !dist.dtensor<<?x?xi64>>
     }
 }
