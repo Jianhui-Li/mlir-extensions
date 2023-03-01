@@ -10,7 +10,7 @@ module {
         %s = arith.index_cast %arg0 : i64 to index
         %0 = ptensor.arange %arg0 %arg1 %arg2 team %c1 : (i64, i64, i64, index) -> !ptensor.ptensor<1 x i64>
         %1 = ptensor.create %s value %v team %c1 {dtype = 2 : i8} : (index, i64, index) -> !ptensor.ptensor<1 x i64>
-        %10 = ptensor.extract_slice %0[%c0][%c3][%c3] : !ptensor.ptensor<1 x i64> to !ptensor.ptensor<1 x i64>
+        %10 = ptensor.subview %0[%c0][%c3][%c3] : !ptensor.ptensor<1 x i64> to !ptensor.ptensor<1 x i64>
         %20 ="ptensor.ewbin"(%10, %1) {op = 0 : i32} : (!ptensor.ptensor<1 x i64>, !ptensor.ptensor<1 x i64>) -> !ptensor.ptensor<1 x i64>
         %30 = builtin.unrealized_conversion_cast %20 : !ptensor.ptensor<1 x i64> to i64
         return %30 : i64
@@ -42,7 +42,7 @@ module {
 // CHECK: "dist.init_dist_tensor"
 // CHECK: dist.local_of_slice
 // CHECK: "dist.local_tensor_of"
-// CHECK: ptensor.extract_slice
+// CHECK: ptensor.subview
 // CHECK: "dist.team_of"
 // CHECK: "dist.rebalance"
 // CHECK: "dist.local_tensor_of"

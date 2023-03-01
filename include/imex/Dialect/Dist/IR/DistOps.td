@@ -358,16 +358,16 @@ def AllReduceOp : Dist_Op<"allreduce", []> {
 }
 
 // ============================================================================
-// (Extended) operations from PTEnsor
+// (Extended) operations from PTensor
 // ============================================================================
 
-def ExtractSliceOp : Dist_Op<"extract_slice", [AttrSizedOperandSegments, Pure]> {
+def SubviewOp : Dist_Op<"subview", [AttrSizedOperandSegments, Pure]> {
     let summary = "distributed extract slice operation";
     let description = [{
-        The "extract_slice" operation extract a tensor from another tensor as
+        The "subview" operation extract a tensor from another tensor as
         specified by the operation's offsets, sizes and strides arguments.
 
-        The distributed extract_slice operation is a shallow wrapper around PTensor.extract_slice
+        The distributed subview operation is a shallow wrapper around PTensor.subview
         and adds offsets and slices for targeted local partition.
     }];
 
@@ -376,22 +376,22 @@ def ExtractSliceOp : Dist_Op<"extract_slice", [AttrSizedOperandSegments, Pure]> 
         Variadic<Index>:$offsets,
         Variadic<Index>:$sizes,
         Variadic<Index>:$strides,
+        DenseI64ArrayAttr:$static_offsets,
+        DenseI64ArrayAttr:$static_sizes,
+        DenseI64ArrayAttr:$static_strides,
         Variadic<Index>:$target_offsets,
         Variadic<Index>:$target_sizes
     );
     let results = (outs AnyType:$result);
 
     let assemblyFormat = [{
-        $source oilist(`offs` $offsets | `sizes` $sizes | `strides` $strides)  attr-dict `:` qualified(type($source)) `to` qualified(type($result)) oilist(`toffs` $target_offsets | `tsizes` $target_sizes)
+        $source ``
+        custom<DynamicIndexList>($offsets, $static_offsets)
+        custom<DynamicIndexList>($sizes, $static_sizes)
+        custom<DynamicIndexList>($strides, $static_strides)
+        attr-dict `:` qualified(type($source)) `to` qualified(type($result))
+        oilist(`toffs` $target_offsets | `tsizes` $target_sizes)
     }];
-
-    let builders = [
-        // auto-deduce return type
-        OpBuilder<(ins "::mlir::Type":$rtyp, "::mlir::Value":$d_tensor, "::mlir::ValueRange":$offsets, "::mlir::ValueRange":$sizes, "::mlir::ValueRange":$strides),
-        [{
-            build($_builder, $_state, rtyp, d_tensor, offsets, sizes, strides, {}, {});
-        }]>,
-    ];
 }
 
 def LoadOp : Dist_Op<"load",

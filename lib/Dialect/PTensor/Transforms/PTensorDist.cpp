@@ -112,16 +112,16 @@ struct DistExtractMemRefOpRWP
   }
 };
 
-/// Rewriting ::imex::ptensor::ExtractSliceOp
+/// Rewriting ::imex::ptensor::SubviewOp
 /// 1. Compute local slice and offsets of dst
-/// 2. Apply ExtractSliceOp to subslice and local partition
+/// 2. Apply SubviewOp to subslice and local partition
 /// 3. Create new DistTensor
-struct DistExtractSliceOpRWP
-    : public RecOpRewritePattern<::imex::ptensor::ExtractSliceOp> {
+struct DistSubviewOpRWP
+    : public RecOpRewritePattern<::imex::ptensor::SubviewOp> {
   using RecOpRewritePattern::RecOpRewritePattern;
 
   ::mlir::LogicalResult
-  matchAndRewrite(::imex::ptensor::ExtractSliceOp op,
+  matchAndRewrite(::imex::ptensor::SubviewOp op,
                   ::mlir::PatternRewriter &rewriter) const override {
 
     // get input and type
@@ -139,8 +139,10 @@ struct DistExtractSliceOpRWP
 
     auto vDTTYp =
         ::imex::dist::DistTensorType::get(rewriter.getContext(), outPTTyp);
-    rewriter.replaceOpWithNewOp<::imex::dist::ExtractSliceOp>(
-        op, vDTTYp, src, op.getOffsets(), op.getSizes(), op.getStrides());
+    rewriter.replaceOpWithNewOp<::imex::dist::SubviewOp>(
+        op, vDTTYp, src, op.getOffsets(), op.getSizes(), op.getStrides(),
+        op.getStaticOffsets(), op.getStaticSizes(), op.getStaticStrides(),
+        ::mlir::ValueRange{}, ::mlir::ValueRange{});
 
     return ::mlir::success();
   }
@@ -388,8 +390,7 @@ struct DistReductionOpRWP
     auto local = createLocalTensorOf(loc, rewriter, op.getInput());
     // return type 0d with same dtype as input
     auto dtype = inpDtTyp.getPTensorType().getElementType();
-    auto retPtTyp = ::imex::ptensor::PTensorType::get(rewriter.getContext(), 0,
-                                                      dtype, false);
+    auto retPtTyp = ::imex::ptensor::PTensorType::get({}, dtype);
     auto redPTnsr = rewriter.create<::imex::ptensor::ReductionOp>(
         loc, retPtTyp, op.getOp(), local);
     // global reduction
@@ -420,16 +421,15 @@ struct PTensorDistPass : public ::imex::PTensorDistBase<PTensorDistPass> {
 
     ::mlir::FrozenRewritePatternSet patterns;
     insertPatterns<DistARangeOpRWP, DistCreateOpRWP, DistEWBinOpRWP,
-                   DistReductionOpRWP, DistExtractMemRefOpRWP,
-                   DistExtractSliceOpRWP, DistInsertSliceOpRWP>(getContext(),
-                                                                patterns);
+                   DistReductionOpRWP, DistExtractMemRefOpRWP, DistSubviewOpRWP,
+                   DistInsertSliceOpRWP>(getContext(), patterns);
     (void)::mlir::applyPatternsAndFoldGreedily(this->getOperation(), patterns);
 
-    // groupOps<::imex::dist::ExtractSliceOp>(
+    // groupOps<::imex::dist::SubviewOp>(
     //     this->getAnalysis<::mlir::DominanceInfo>(), this->getOperation(),
-    //     [](::imex::dist::ExtractSliceOp &op) { return true; },
-    //     [](::imex::dist::ExtractSliceOp &op) { return op.getOperands(); },
-    //     [](::imex::dist::ExtractSliceOp &, ::imex::dist::ExtractSliceOp &) {
+    //     [](::imex::dist::SubviewOp &op) { return true; },
+    //     [](::imex::dist::SubviewOp &op) { return op.getOperands(); },
+    //     [](::imex::dist::SubviewOp &, ::imex::dist::SubviewOp &) {
     //       return false;
     //     }, hasWriteBetween);
   }

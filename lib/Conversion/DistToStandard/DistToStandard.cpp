@@ -65,10 +65,10 @@ inline void requireFunc(::mlir::Location &loc, ::mlir::OpBuilder &builder,
 // ***** Individual patterns *****
 // *******************************
 
-struct ExtractSliceOpConverter
-    : public ::mlir::OpConversionPattern<::imex::dist::ExtractSliceOp> {
+struct SubviewOpConverter
+    : public ::mlir::OpConversionPattern<::imex::dist::SubviewOp> {
   using ::mlir::OpConversionPattern<
-      ::imex::dist::ExtractSliceOp>::OpConversionPattern;
+      ::imex::dist::SubviewOp>::OpConversionPattern;
 
   /// Initialize the pattern.
   void initialize() {
@@ -77,8 +77,8 @@ struct ExtractSliceOpConverter
   }
 
   ::mlir::LogicalResult
-  matchAndRewrite(::imex::dist::ExtractSliceOp op,
-                  ::imex::dist::ExtractSliceOp::Adaptor adaptor,
+  matchAndRewrite(::imex::dist::SubviewOp op,
+                  ::imex::dist::SubviewOp::Adaptor adaptor,
                   ::mlir::ConversionPatternRewriter &rewriter) const override {
     // get input and type
     auto src = op.getSource();
@@ -91,11 +91,20 @@ struct ExtractSliceOpConverter
 
     auto loc = op.getLoc();
     // Get the local part of the global slice, team, rank, offsets
-    auto slcOffs = op.getOffsets();
-    auto slcSizes = op.getSizes();
-    auto slcStrides = op.getStrides();
-    ::mlir::ValueRange tOffs = op.getTargetOffsets();
-    ::mlir::ValueRange tSizes = op.getTargetSizes();
+    auto _slcOffs = adaptor.getOffsets();
+    auto _slcSizes = adaptor.getSizes();
+    auto _slcStrides = adaptor.getStrides();
+    auto sSlcOffs = adaptor.getStaticOffsets();
+    auto sSlcSizes = adaptor.getStaticSizes();
+    auto sSlcStrides = adaptor.getStaticStrides();
+    ::mlir::ValueRange tOffs = adaptor.getTargetOffsets();
+    ::mlir::ValueRange tSizes = adaptor.getTargetSizes();
+    auto rank = std::max(sSlcOffs.size(), _slcOffs.size());
+
+    // get offs, sizes strides as values
+    auto slcOffs = getMixedAsValues(loc, rewriter, _slcOffs, sSlcOffs);
+    auto slcSizes = getMixedAsValues(loc, rewriter, _slcSizes, sSlcSizes);
+    auto slcStrides = getMixedAsValues(loc, rewriter, _slcStrides, sSlcStrides);
 
     if (tOffs.empty()) {
       assert(tSizes.empty());
@@ -105,45 +114,30 @@ struct ExtractSliceOpConverter
       tSizes = lTarget.getTSizes();
     }
 
-    auto rank = slcSizes.size();
-    ::mlir::SmallVector<::mlir::Value> tmp;
-    for (size_t i = 0; i < rank; ++i) {
-      if (auto cval = ::mlir::getConstantIntValue(slcSizes[i]);
-          cval && cval.value() == 1) {
-        std::cerr << "replacing dim " << i
-                  << " with constant size: " << cval.value() << std::endl;
-        tmp.emplace_back(slcSizes[i]);
-      } else {
-        tmp.emplace_back(tSizes[i]);
-      }
-    }
-    tSizes = tmp;
-
     // Compute local part of slice
     auto lOffs = createLocalOffsetsOf(loc, rewriter, src);
     auto lSlice = rewriter.create<::imex::dist::LocalOffsetForTargetSliceOp>(
         loc, lOffs, tOffs, slcOffs, slcStrides);
     auto lSlcOffsets = lSlice.getLOffsets();
 
-#if 0
-    auto zero = createIndex(loc, rewriter, 0);
-    (void)
-    rewriter.create<::mlir::func::CallOp>(
-        loc, "_idtr_extractslice", ::mlir::TypeRange(),
-        ::mlir::ValueRange {createExtractPtrFromMemRefFromValues(rewriter, loc, slcOffs),
-                            createExtractPtrFromMemRefFromValues(rewriter, loc, slcSizes),
-                            createExtractPtrFromMemRefFromValues(rewriter, loc, slcStrides),
-                            createExtractPtrFromMemRefFromValues(rewriter, loc, tOffs),
-                            createExtractPtrFromMemRefFromValues(rewriter, loc, tSizes),
-                            createExtractPtrFromMemRefFromValues(rewriter, loc, lSlcOffsets),
-                            zero,
-                            zero}
-    );
-#endif
+    // get static size==1 and strides back
+    ::mlir::SmallVector<::mlir::OpFoldResult> vOffs, vSizes, vStrides;
+    for (size_t i = 0; i < rank; ++i) {
+      vOffs.emplace_back(lSlcOffsets[i]);
+      vSizes.emplace_back(sSlcSizes[i] == 1
+                              ? ::mlir::OpFoldResult{rewriter.getIndexAttr(1)}
+                              : ::mlir::OpFoldResult{tSizes[i]});
+      auto s = sSlcStrides[i];
+      vStrides.emplace_back(
+          ::mlir::ShapedType::isDynamic(s)
+              ? ::mlir::OpFoldResult{slcStrides[i]}
+              : ::mlir::OpFoldResult{rewriter.getIndexAttr(s)});
+    }
+
     // create local view
     auto lTnsr = createLocalTensorOf(loc, rewriter, src);
-    auto lView = rewriter.create<::imex::ptensor::ExtractSliceOp>(
-        loc, resDTTyp.getPTensorType(), lTnsr, lSlcOffsets, tSizes, slcStrides);
+    auto lView = rewriter.create<::imex::ptensor::SubviewOp>(
+        loc, resDTTyp.getPTensorType(), lTnsr, vOffs, vSizes, vStrides);
 
     // init our new dist tensor
     auto team = createTeamOf(loc, rewriter, src);
@@ -468,32 +462,23 @@ struct ExtractFromDistOpConverter : public ::mlir::OpConversionPattern<OP> {
   ::mlir::LogicalResult
   matchAndRewrite(OP op, typename OP::Adaptor adaptor,
                   ::mlir::ConversionPatternRewriter &rewriter) const override {
-    auto defOp = op.getDTensor()
-                     .template getDefiningOp<::imex::dist::InitDistTensorOp>();
+
+    auto dt = adaptor.getDTensor();
+    auto castOp =
+        dt.template getDefiningOp<::mlir::UnrealizedConversionCastOp>();
+    while (castOp && castOp->getNumOperands() == 1) {
+      dt = castOp->getOperand(0);
+      auto nOp =
+          dt.template getDefiningOp<::mlir::UnrealizedConversionCastOp>();
+      if (nOp) {
+        castOp = nOp;
+      } else
+        break;
+    }
+
     // std::cerr << "defOp: "; op.getDTensor().dump(); std::cerr << std::endl;
-    if (defOp) {
-      // here this is from a normal InitDistTensorOp; we can extract operands
-      // from it
-      if constexpr (std::is_same_v<OP, ::imex::dist::LocalTensorOfOp>) {
-        rewriter.replaceOp(op, defOp.getPTensor());
-      } else if constexpr (std::is_same_v<OP, ::imex::dist::TeamOfOp>) {
-        rewriter.replaceOp(op, defOp.getTeam());
-      } else if constexpr (std::is_same_v<OP, ::imex::dist::IsBalancedOp>) {
-        rewriter.replaceOp(op, createIndex(op.getLoc(), rewriter,
-                                           defOp.getBalancedAttr().getInt()));
-      } else if constexpr (std::is_same_v<OP, ::imex::dist::GlobalShapeOfOp>) {
-        rewriter.replaceOp(op, defOp.getGShape());
-      } else if constexpr (std::is_same_v<OP, ::imex::dist::LocalOffsetsOfOp>) {
-        rewriter.replaceOp(op, defOp.getLOffsets());
-      }
-    } else {
-      // disttensor block args get type-converted into
-      // UnrealizedConversionCastOp
-      auto castOp =
-          adaptor.getDTensor()
-              .template getDefiningOp<::mlir::UnrealizedConversionCastOp>();
-      if (!castOp)
-        return ::mlir::failure();
+    if (castOp && castOp->getNumOperands() > 2) {
+      // block args get type-converted into UnrealizedConversionCastOp
       // here this is from a block arg; we can extract operands from the
       // inserted cast
       if constexpr (std::is_same_v<OP, ::imex::dist::LocalTensorOfOp>) {
@@ -553,6 +538,25 @@ struct ExtractFromDistOpConverter : public ::mlir::OpConversionPattern<OP> {
       } else {
         rewriter.replaceOp(op, ::mlir::ValueRange{});
       }
+    } else if (auto defOp = dt.template getDefiningOp<
+                            ::imex::dist::InitDistTensorOp>()) {
+      // here this is from a normal InitDistTensorOp; we can extract operands
+      // from it
+      if constexpr (std::is_same_v<OP, ::imex::dist::LocalTensorOfOp>) {
+        rewriter.replaceOp(op, defOp.getPTensor());
+      } else if constexpr (std::is_same_v<OP, ::imex::dist::TeamOfOp>) {
+        rewriter.replaceOp(op, defOp.getTeam());
+      } else if constexpr (std::is_same_v<OP, ::imex::dist::IsBalancedOp>) {
+        rewriter.replaceOp(op, createIndex(op.getLoc(), rewriter,
+                                           defOp.getBalancedAttr().getInt()));
+      } else if constexpr (std::is_same_v<OP, ::imex::dist::GlobalShapeOfOp>) {
+        rewriter.replaceOp(op, defOp.getGShape());
+      } else if constexpr (std::is_same_v<OP, ::imex::dist::LocalOffsetsOfOp>) {
+        rewriter.replaceOp(op, defOp.getLOffsets());
+      }
+    } else {
+      // neither an InitDistTensorOp nor a valid cast
+      return ::mlir::failure();
     }
     return ::mlir::success();
   }
@@ -1056,7 +1060,7 @@ struct ConvertDistToStandardPass
     // All the dist conversion patterns/rewriter
     ::mlir::RewritePatternSet patterns(&ctxt);
     patterns.insert<
-        InsertSliceOpConverter, ExtractSliceOpConverter, EWBinOpConverter,
+        InsertSliceOpConverter, SubviewOpConverter, EWBinOpConverter,
         LocalBoundingBoxOpConverter, RePartitionOpConverter,
         RuntimePrototypesOpConverter, NProcsOpConverter, PRankOpConverter,
         InitDistTensorOpConverter, LocalPartitionOpConverter,

@@ -84,7 +84,7 @@ The below set of operations accrues from the following rules:
   * `broadcast(rhs, shape) : (ptensor.ptensor, shape.shape) -> ptensor.ptensor`
   * `result_type(inpts) : (list) -> type`
 * Indexing
-  * `extract_slice(rhs, slice) : (ptensor.ptensor, list) -> ptensor.ptensor`
+  * `subview(rhs, slice) : (ptensor.ptensor, list) -> ptensor.ptensor`
   * `extract_mask(rhs, mask) : (ptensor.ptensor, ptensor.ptensor) -> ptensor.ptensor`
 * Manipulation
   * `combine{$cop}(tensors, axis) : (list, int) -> ptensor.ptensor`

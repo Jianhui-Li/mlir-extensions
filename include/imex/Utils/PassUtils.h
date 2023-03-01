@@ -18,6 +18,7 @@
 #include <mlir/Dialect/Func/IR/FuncOps.h>
 #include <mlir/Dialect/MemRef/IR/MemRef.h>
 #include <mlir/Dialect/Tensor/IR/Tensor.h>
+#include <mlir/Dialect/Utils/StaticValueUtils.h>
 #include <mlir/IR/Builders.h>
 #include <mlir/IR/BuiltinOps.h>
 #include <mlir/IR/BuiltinTypeInterfaces.h>
@@ -115,6 +116,20 @@ inline auto getTensorType(::mlir::MLIRContext *ctxt, int64_t rank,
       elType); //, layout);
 }
 
+inline ::mlir::SmallVector<::mlir::Value>
+getMixedAsValues(const ::mlir::Location &loc, ::mlir::OpBuilder &builder,
+                 const ::mlir::ValueRange &dyns,
+                 ::llvm::ArrayRef<int64_t> statics) {
+  ::mlir::SmallVector<::mlir::Value> out;
+  auto dyn = dyns.begin();
+  for (auto s : statics) {
+    out.emplace_back(::mlir::ShapedType::isDynamic(s)
+                         ? *(dyn++)
+                         : createIndex(loc, builder, s));
+  }
+  return out;
+}
+
 inline void
 dispatchIndexValues(const ::mlir::ValueRange &sizes,
                     ::mlir::SmallVectorImpl<::mlir::Value> &dynamicVec,
@@ -140,6 +155,18 @@ inline auto createEmptyTensor(::mlir::OpBuilder &builder, ::mlir::Location loc,
                                                        dynamicSizes);
 }
 
+/// get dyn-sized mlir::RankedTensorType for given rank and elType
+/// if strided==true make it a strided layout
+inline auto getMemRefType(::mlir::MLIRContext *ctxt, int64_t rank,
+                          ::mlir::Type elType, bool strided = true) {
+  static auto kDynamic = ::mlir::ShapedType::kDynamic;
+  auto layout = ::mlir::StridedLayoutAttr::get(
+      ctxt, kDynamic, ::mlir::SmallVector<int64_t>(rank, kDynamic));
+  return ::mlir::MemRefType::get(std::vector<int64_t>(rank, kDynamic), elType,
+                                 strided ? layout
+                                         : ::mlir::StridedLayoutAttr{});
+}
+
 /// get mixed statically and dynamically sized mlir::MemRefType for given sizes
 /// and elType if strided==true make it a strided layout
 inline auto getMemRefType(::mlir::MLIRContext *ctxt,
@@ -160,18 +187,6 @@ inline auto getMemRefType(::mlir::MLIRContext *ctxt,
                           const ::mlir::ValueRange &sizes, ::mlir::Type elType,
                           bool strided = true) {
   return getMemRefType(ctxt, getShapeFromValues(sizes), elType, strided);
-}
-
-/// get dyn-sized mlir::RankedTensorType for given rank and elType
-/// if strided==true make it a strided layout
-inline auto getMemRefType(::mlir::MLIRContext *ctxt, int64_t rank,
-                          ::mlir::Type elType, bool strided = true) {
-  static auto kDynamic = ::mlir::ShapedType::kDynamic;
-  auto layout = ::mlir::StridedLayoutAttr::get(
-      ctxt, kDynamic, ::mlir::SmallVector<int64_t>(rank, kDynamic));
-  return ::mlir::MemRefType::get(std::vector<int64_t>(rank, kDynamic), elType,
-                                 strided ? layout
-                                         : ::mlir::StridedLayoutAttr{});
 }
 
 /// Create a 1d MemRef alloc with given size and elType
