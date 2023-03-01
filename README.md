@@ -79,6 +79,12 @@ will run using `FileCheck` utility in LLVM built tree.
 External `lit` is not needed as well since all tests will run using `llvm-lit`
 in the LLVM build tree.
 
+#### Installing to custom dir
+To install an existing build to a custom directory `myCustomDir`, enter the build directory and do
+```
+ cmake --install . myCustomDir
+```
+
 #### Building docs
 To build user documentation do
 ```sh
