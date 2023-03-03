@@ -258,14 +258,61 @@ struct InsertSliceLowering
     auto view = rewriter.create<::mlir::memref::SubViewOp>(
         loc, dst, adaptor.getOffsets(), adaptor.getSizes(),
         adaptor.getStrides());
+    auto viewMRTyp = view.getType().dyn_cast<::mlir::MemRefType>();
+    auto rank = viewMRTyp.getRank();
+
+    // FIXME properly handle broadcasting
+    if (srcMRTyp.getRank() == 0) {
+      // we just assume the slice size is constant 0 as well
+      // assert(getSizeFromValues(adaptor.getSizes()) == 0);
+      ::mlir::SmallVector<int64_t> eSz(rank, 1);
+      src = rewriter.create<::mlir::memref::ExpandShapeOp>(
+          loc, eSz, src, ::llvm::ArrayRef<::mlir::ReassociationIndices>{});
+    }
 
     rewriter.replaceOp(
         op, ::mlir::linalg::makeMemRefCopyOp(rewriter, loc, src, view)
                 .getResults());
+    return ::mlir::success();
+  }
+};
+
+#if 0
+    auto viewMRTyp = view.getType().dyn_cast<::mlir::MemRefType>();
+    auto rank = viewMRTyp.getRank();
+
+    ::std::array<::mlir::AffineMap, 2> maps = {
+      ::mlir::AffineMap::getMinorIdentityMap(rank, srcMRTyp.getRank(), op.getContext()),
+      ::mlir::AffineMap::getMultiDimIdentityMap(rank, op.getContext())
+    };
+
+    // we just make all dims parallel
+    ::mlir::SmallVector<mlir::utils::IteratorType> iterators(
+        rank, ::mlir::utils::IteratorType::parallel);
+
+    auto srcTnsr = rewriter.create<::mlir::bufferization::ToTensorOp>(loc, src).getResult();
+    auto dstTnsr = rewriter.create<::mlir::bufferization::ToTensorOp>(loc, view).getResult();
+
+    // FIXME: make createParFor ready for this
+    auto resTnsr = rewriter.create<::mlir::linalg::GenericOp>(
+        loc, dstTnsr.getType(), srcTnsr, dstTnsr, maps, iterators,
+        [](::mlir::OpBuilder &builder, ::mlir::Location loc, ::mlir::ValueRange args) {
+          (void)builder.create<::mlir::linalg::YieldOp>(loc, args[0]);
+        });
+    // done. replace op with memref
+    auto resMR = rewriter.create<::mlir::bufferization::ToMemrefOp>(
+        loc, view.getType(), resTnsr.getResult(0));
+
+    // hack to protect linalg.generic from getting erased
+    auto z = createIndex(loc, rewriter, 0);
+    ::mlir::SmallVector<::mlir::Value> zeros(rank, z);
+    rewriter.replaceOpWithNewOp<::mlir::memref::StoreOp>(
+        op, rewriter.create<::mlir::memref::LoadOp>(loc, resMR, zeros), resMR, zeros);
 
     return ::mlir::success();
   }
 };
+#endif
 
 /// Convert PTensor's arange and its return type to Linalg/tensor.
 /// Also needs some arith and affine (for linalg::genericop).

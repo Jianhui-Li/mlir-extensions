@@ -80,6 +80,8 @@ inline ::mlir::Value createIndexCast(const ::mlir::Location &loc,
                    .getResult();
 }
 
+/// @return array of static sizes form ValueRange: actual size if constant,
+/// kDynamic if not
 inline ::mlir::SmallVector<int64_t>
 getShapeFromValues(const ::mlir::ValueRange &sizes) {
   auto rank = sizes.size();
@@ -91,6 +93,20 @@ getShapeFromValues(const ::mlir::ValueRange &sizes) {
     }
   }
   return szVec;
+}
+
+/// @return number of elements for given shape if all sizes are constant,
+/// kDynamic otherwise
+inline int64_t getSizeFromValues(const ::mlir::ValueRange &sizes) {
+  int64_t sz = 0;
+  for (auto s : sizes) {
+    if (auto cval = ::mlir::getConstantIntValue(s)) {
+      sz *= cval.value();
+    } else {
+      return ::mlir::ShapedType::kDynamic;
+    }
+  }
+  return sz;
 }
 
 /// get dyn-sized mlir::RankedTensorType for given size values and elType

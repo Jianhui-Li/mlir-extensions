@@ -895,9 +895,8 @@ struct RePartitionOpConverter
     auto szsPtr = createExtractPtrFromMemRefFromValues(rewriter, loc, tSizes);
 
     // create output tensor with target size
-    auto xxx = createInt(loc, rewriter, 4711);
     auto outTnsr = rewriter.create<::imex::ptensor::CreateOp>(
-        loc, tSizes, ::imex::ptensor::fromMLIR(elTyp), xxx, nullptr,
+        loc, tSizes, ::imex::ptensor::fromMLIR(elTyp), nullptr, nullptr,
         nullptr); // FIXME device
     auto outMRTyp = outTnsr.getType()
                         .dyn_cast<::imex::ptensor::PTensorType>()

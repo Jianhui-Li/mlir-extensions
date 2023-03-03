@@ -46,8 +46,8 @@
 #include "PassDetail.h"
 
 #include <iostream>
+#include <set>
 #include <unordered_map>
-#include <vector>
 
 namespace imex {
 namespace dist {
@@ -192,10 +192,10 @@ struct DistCoalescePass : public ::imex::DistCoalesceBase<DistCoalescePass> {
   /// entry point for back propagation of target parts, starting with
   /// RePartitionOp. Verifies that defining ops are what we assume/can handle.
   /// Then starts actual back propagation
-  uint64_t backPropagatePart(
-      ::mlir::IRRewriter &builder, ::mlir::DominanceInfo &dom,
-      ::imex::dist::RePartitionOp rpOp, ::mlir::Operation *&nOp,
-      ::mlir::SmallVector<::imex::dist::RePartitionOp> &toDelete) {
+  uint64_t
+  backPropagatePart(::mlir::IRRewriter &builder, ::mlir::DominanceInfo &dom,
+                    ::imex::dist::RePartitionOp rpOp, ::mlir::Operation *&nOp,
+                    ::std::set<::imex::dist::RePartitionOp> &toDelete) {
     nOp = nullptr;
     auto offs = rpOp.getTargetOffsets();
     if (offs.empty()) {
@@ -226,11 +226,11 @@ struct DistCoalescePass : public ::imex::DistCoalesceBase<DistCoalescePass> {
   /// propagates as it follows only supported ops, all other ops act as
   /// propagation barriers (e.g. InsertSliceOps) on the way it updates target
   /// info on SubviewOps and marks RePartitionOps for elimination
-  uint64_t backPropagatePart(
-      ::mlir::IRRewriter &builder, ::mlir::Operation *op,
-      const ::mlir::ValueRange &tOffs, const ::mlir::ValueRange &tSizes,
-      ::mlir::Operation *&nOp,
-      ::mlir::SmallVector<::imex::dist::RePartitionOp> &toDelete) {
+  uint64_t
+  backPropagatePart(::mlir::IRRewriter &builder, ::mlir::Operation *op,
+                    const ::mlir::ValueRange &tOffs,
+                    const ::mlir::ValueRange &tSizes, ::mlir::Operation *&nOp,
+                    ::std::set<::imex::dist::RePartitionOp> &toDelete) {
     ::mlir::Value val;
     uint64_t n = 0;
     nOp = nullptr;
@@ -239,8 +239,10 @@ struct DistCoalescePass : public ::imex::DistCoalesceBase<DistCoalescePass> {
       updateTargetPart(builder, typedOp, tOffs, tSizes);
     } else if (auto typedOp =
                    ::mlir::dyn_cast<::imex::dist::RePartitionOp>(op)) {
+      // continue even if already deleted in case different target parts are
+      // needed
       val = typedOp.getBase();
-      toDelete.emplace_back(typedOp);
+      toDelete.emplace(typedOp);
     } else if (auto typedOp = ::mlir::dyn_cast<::imex::ptensor::EWBinOp>(op)) {
       auto defOp = typedOp.getLhs().getDefiningOp();
       if (defOp) {
@@ -277,7 +279,7 @@ struct DistCoalescePass : public ::imex::DistCoalesceBase<DistCoalescePass> {
 
     // back-propagate targets from RePartitionOps
 
-    ::mlir::SmallVector<::imex::dist::RePartitionOp> rpToElimNew;
+    ::std::set<::imex::dist::RePartitionOp> rpToElimNew;
     ::mlir::SmallVector<::imex::dist::RePartitionOp> rpOps;
 
     // store all RePartitionOps with target in vector
@@ -296,10 +298,12 @@ struct DistCoalescePass : public ::imex::DistCoalesceBase<DistCoalescePass> {
     auto &dom = this->getAnalysis<::mlir::DominanceInfo>();
 
     // perform back propagation on each
-    for (auto iop : rpOps) {
-      ::mlir::Operation *nOp = nullptr;
-      backPropagatePart(builder, dom, iop, nOp, rpToElimNew);
-      assert(!nOp);
+    for (auto rp = rpOps.rbegin(); rp != rpOps.rend(); ++rp) {
+      if (rpToElimNew.find(*rp) == rpToElimNew.end()) {
+        ::mlir::Operation *nOp = nullptr;
+        backPropagatePart(builder, dom, *rp, nOp, rpToElimNew);
+        assert(!nOp);
+      }
     }
 
     // eliminate no longer needed RePartitionOps

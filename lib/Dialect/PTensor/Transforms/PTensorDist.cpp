@@ -199,8 +199,14 @@ struct DistInsertSliceOpRWP
     ::mlir::ValueRange tSlcOffs = tSlice.getTOffsets();
     auto tSlcSizes = tSlice.getTSizes();
 
+    ::mlir::Value rpSrc;
     // Repartition source
-    auto rpSrc = createRePartition(loc, rewriter, src, tSlcOffs, tSlcSizes);
+    if (auto cval = ::mlir::getConstantIntValue(slcSizes[0]);
+        cval && cval.value() == 1) {
+      rpSrc = src;
+    } else {
+      rpSrc = createRePartition(loc, rewriter, src, tSlcOffs, tSlcSizes);
+    }
 
     rewriter.replaceOpWithNewOp<::imex::dist::InsertSliceOp>(
         op, dst, rpSrc, op.getOffsets(), op.getSizes(), op.getStrides(),
