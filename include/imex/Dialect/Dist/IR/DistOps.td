@@ -443,7 +443,7 @@ def InsertSliceOp : Dist_Op<"insert_slice", [AttrSizedOperandSegments]> {
   );
 
   let assemblyFormat = [{
-    $source `into` $destination `[` $offsets `]``[` $sizes `]``[` $strides `]` attr-dict `:` qualified(type($destination)) `into` qualified(type($source)) oilist(`toffs` $target_offsets | `tsizes` $target_sizes)
+    $source `into` $destination `[` $offsets `]``[` $sizes `]``[` $strides `]` attr-dict `:` qualified(type($source)) `into` qualified(type($destination)) oilist(`toffs` $target_offsets | `tsizes` $target_sizes)
   }];
 }
 

@@ -427,7 +427,7 @@ def InsertSliceOp : PTensor_Op<"insert_slice", [SameVariadicOperandSize]> {
   );
 
   let assemblyFormat = [{
-    $source `into` $destination `[` $offsets `]``[` $sizes `]``[` $strides `]` attr-dict `:` qualified(type($destination)) `into` qualified(type($source))
+    $source `into` $destination `[` $offsets `]``[` $sizes `]``[` $strides `]` attr-dict `:` qualified(type($source)) `into` qualified(type($destination))
   }];
 }
 

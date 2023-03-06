@@ -264,15 +264,48 @@ struct InsertSliceLowering
     // FIXME properly handle broadcasting
     if (srcMRTyp.getRank() == 0) {
       // we just assume the slice size is constant 0 as well
-      // assert(getSizeFromValues(adaptor.getSizes()) == 0);
+      // assert(getSizeFromValues(adaptor.getSizes()) == 1);
       ::mlir::SmallVector<int64_t> eSz(rank, 1);
       src = rewriter.create<::mlir::memref::ExpandShapeOp>(
           loc, eSz, src, ::llvm::ArrayRef<::mlir::ReassociationIndices>{});
     }
 
-    rewriter.replaceOp(
-        op, ::mlir::linalg::makeMemRefCopyOp(rewriter, loc, src, view)
-                .getResults());
+    // auto zero = createIndex(loc, rewriter, 0);
+    // rewriter.create<::mlir::func::CallOp>(
+    //     loc, "_idtr_extractslice",
+    //             ::mlir::TypeRange{},
+    //             ::mlir::ValueRange{createExtractPtrFromMemRefFromValues(rewriter,
+    //             loc, adaptor.getOffsets()),
+    //                                createExtractPtrFromMemRefFromValues(rewriter,
+    //                                loc, adaptor.getSizes()),
+    //                                createExtractPtrFromMemRefFromValues(rewriter,
+    //                                loc, adaptor.getStrides()), zero, zero,
+    //                                zero, zero, zero}
+    //             );
+
+    auto sz =
+        easyIdx(loc, rewriter,
+                ::mlir::linalg::createOrFoldDimOp(rewriter, loc, view, 0));
+    for (int64_t i = 1; i < rank; ++i) {
+      sz = sz *
+           easyIdx(loc, rewriter,
+                   ::mlir::linalg::createOrFoldDimOp(rewriter, loc, view, i));
+    }
+    auto gt0 = rewriter.create<::mlir::arith::CmpIOp>(
+        loc, ::mlir::arith::CmpIPredicate::sgt, sz.get(),
+        createIndex(loc, rewriter, 0));
+
+    rewriter.replaceOpWithNewOp<::mlir::scf::IfOp>(
+        op, ::mlir::TypeRange{}, gt0,
+        [&](::mlir::OpBuilder &builder, ::mlir::Location loc) {
+          builder.create<::mlir::scf::YieldOp>(
+              loc, ::mlir::linalg::makeMemRefCopyOp(builder, loc, src, view)
+                       .getResults());
+        },
+        [&](::mlir::OpBuilder &builder, ::mlir::Location loc) {
+          builder.create<::mlir::scf::YieldOp>(loc, ::mlir::ValueRange{});
+        });
+
     return ::mlir::success();
   }
 };
@@ -748,13 +781,11 @@ struct ConvertPTensorToLinalgPass
     // We convert all PTensor stuff...
     target.addIllegalDialect<::imex::ptensor::PTensorDialect>();
     // ...into Linalg, Affine, Tensor, Arith
-    target.addLegalDialect<::mlir::linalg::LinalgDialect>();
-    target.addLegalDialect<::mlir::AffineDialect>();
-    target.addLegalDialect<::mlir::arith::ArithDialect>();
-    target.addLegalDialect<::mlir::memref::MemRefDialect>();
-    target.addLegalDialect<::mlir::tensor::TensorDialect>();
-    target.addLegalDialect<::mlir::shape::ShapeDialect>();
-    target.addLegalDialect<::mlir::bufferization::BufferizationDialect>();
+    target.addLegalDialect<
+        ::mlir::linalg::LinalgDialect, ::mlir::AffineDialect,
+        ::mlir::arith::ArithDialect, ::mlir::memref::MemRefDialect,
+        ::mlir::tensor::TensorDialect, ::mlir::shape::ShapeDialect,
+        ::mlir::bufferization::BufferizationDialect, ::mlir::scf::SCFDialect>();
     target.addLegalOp<::mlir::UnrealizedConversionCastOp>(); // FIXME
     // make sure function boundaries use tensors (not PTensors)
     target.addDynamicallyLegalOp<::mlir::func::FuncOp>(

@@ -257,6 +257,19 @@ struct InsertSliceOpConverter
     auto lDst = createLocalTensorOf(loc, rewriter, dst);
     auto lSrc = createLocalTensorOf(loc, rewriter, src);
 
+    // auto zero = createIndex(loc, rewriter, 0);
+    // rewriter.create<::mlir::func::CallOp>(
+    //     loc, "_idtr_extractslice",
+    //             ::mlir::TypeRange{},
+    //             ::mlir::ValueRange{createExtractPtrFromMemRefFromValues(rewriter,
+    //             loc, lSlcOffsets),
+    //                                createExtractPtrFromMemRefFromValues(rewriter,
+    //                                loc, tSizes),
+    //                                createExtractPtrFromMemRefFromValues(rewriter,
+    //                                loc, slcStrides), zero, zero, zero, zero,
+    //                                zero}
+    //             );
+
     // apply to InsertSliceOp
     rewriter.replaceOpWithNewOp<::imex::ptensor::InsertSliceOp>(
         op, lDst, lSrc, lSlcOffsets, tSizes, slcStrides);
