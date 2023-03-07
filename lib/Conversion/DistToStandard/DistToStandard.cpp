@@ -695,6 +695,13 @@ struct LocalTargetOfSliceOpConverter
     auto slcStride = easyIdx(loc, rewriter, slcStrides[0]);
     auto slcSize = easyIdx(loc, rewriter, slcSizes[0]);
 
+#if HAVE_KDYNAMIC_SIZED_OPS
+    if (auto cval = ::mlir::getConstantIntValue(slcSize.get());
+        cval && cval == ::mlir::ShapedType::kDynamic) {
+      slcSize = easyIdx(loc, rewriter, lExtnt);
+    }
+#endif
+
     auto zeroIdx = easyIdx(loc, rewriter, 0);
     auto oneIdx = easyIdx(loc, rewriter, 1);
     EasyVal<bool> eTrue(loc, rewriter, true);
@@ -739,7 +746,23 @@ struct LocalTargetOfSliceOpConverter
 
     for (auto i = 1; i < rank; ++i) {
       // results[0 * rank + i] = slcOffs[i];
-      results[1 * rank + i] = slcSizes[i];
+#if HAVE_KDYNAMIC_SIZED_OPS
+      if (auto cval = ::mlir::getConstantIntValue(slcSizes[i]);
+          cval && cval == ::mlir::ShapedType::kDynamic) {
+        if (auto oval = ::mlir::getConstantIntValue(slcOffs[i]);
+            oval && oval == 0) {
+          if (auto sval = ::mlir::getConstantIntValue(slcStrides[i]);
+              sval && sval == 1) {
+            results[1 * rank + i] =
+                ::mlir::linalg::createOrFoldDimOp(rewriter, loc, lMemRef, i);
+            continue;
+          }
+        }
+        assert(!"Unspecified end in slice implemented only if slice in dim>0 "
+                "is equivalent to '0::1'");
+      } else
+#endif
+        results[1 * rank + i] = slcSizes[i];
     }
 
     rewriter.replaceOp(op, results);

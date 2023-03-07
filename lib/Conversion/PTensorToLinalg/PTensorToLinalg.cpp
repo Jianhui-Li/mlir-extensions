@@ -255,33 +255,45 @@ struct InsertSliceLowering
     if (!dstMRTyp || !srcMRTyp)
       return ::mlir::failure();
 
+    auto rank = dstMRTyp.getRank();
+    auto slcOffs = adaptor.getOffsets();
+    auto slcSizes = adaptor.getSizes();
+    auto slcStrides = adaptor.getStrides();
+
+#if HAVE_KDYNAMIC_SIZED_OPS
+    ::mlir::SmallVector<::mlir::Value> szs;
+    for (auto i = 0; i < rank; ++i) {
+      // results[0 * rank + i] = slcOffs[i];
+      if (auto cval = ::mlir::getConstantIntValue(slcSizes[i]);
+          cval && cval == ::mlir::ShapedType::kDynamic) {
+        if (auto oval = ::mlir::getConstantIntValue(slcOffs[i]);
+            oval && oval == 0) {
+          if (auto sval = ::mlir::getConstantIntValue(slcStrides[i]);
+              sval && sval == 1) {
+            szs.emplace_back(
+                ::mlir::linalg::createOrFoldDimOp(rewriter, loc, dst, i));
+            continue;
+          }
+        }
+        assert(!"Unspecified end in slice implemented only if slice is "
+                "equivalent to '0::1'");
+      } else {
+        szs.emplace_back(slcSizes[i]);
+      }
+    }
+    auto view = rewriter.create<::mlir::memref::SubViewOp>(loc, dst, slcOffs,
+                                                           szs, slcStrides);
+#else  // HAVE_KDYNAMIC_SIZED_OPS
     auto view = rewriter.create<::mlir::memref::SubViewOp>(
-        loc, dst, adaptor.getOffsets(), adaptor.getSizes(),
-        adaptor.getStrides());
-    auto viewMRTyp = view.getType().dyn_cast<::mlir::MemRefType>();
-    auto rank = viewMRTyp.getRank();
+        loc, dst, slcOffs, slcSizes, slcStrides);
+#endif // HAVE_KDYNAMIC_SIZED_OPS
 
     // FIXME properly handle broadcasting
     if (srcMRTyp.getRank() == 0) {
-      // we just assume the slice size is constant 0 as well
-      // assert(getSizeFromValues(adaptor.getSizes()) == 1);
       ::mlir::SmallVector<int64_t> eSz(rank, 1);
       src = rewriter.create<::mlir::memref::ExpandShapeOp>(
           loc, eSz, src, ::llvm::ArrayRef<::mlir::ReassociationIndices>{});
     }
-
-    // auto zero = createIndex(loc, rewriter, 0);
-    // rewriter.create<::mlir::func::CallOp>(
-    //     loc, "_idtr_extractslice",
-    //             ::mlir::TypeRange{},
-    //             ::mlir::ValueRange{createExtractPtrFromMemRefFromValues(rewriter,
-    //             loc, adaptor.getOffsets()),
-    //                                createExtractPtrFromMemRefFromValues(rewriter,
-    //                                loc, adaptor.getSizes()),
-    //                                createExtractPtrFromMemRefFromValues(rewriter,
-    //                                loc, adaptor.getStrides()), zero, zero,
-    //                                zero, zero, zero}
-    //             );
 
     auto sz =
         easyIdx(loc, rewriter,

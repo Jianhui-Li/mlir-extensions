@@ -121,6 +121,22 @@ struct DistCoalescePass : public ::imex::DistCoalesceBase<DistCoalescePass> {
     return false;
   }
 
+  /// @return if op1 can be moved directly after op2
+  bool canMoveAfter(::mlir::DominanceInfo &dom, ::mlir::Operation *op1,
+                    ::mlir::Operation *op2) {
+    assert(op2 != op1);
+    if (dom.dominates(op2, op1)) {
+      for (auto o : op1->getOperands()) {
+        auto dOp = o.getDefiningOp();
+        if (dOp && !dom.dominates(dOp, op2)) {
+          return false;
+        }
+      }
+    } else
+      return false;
+    return true;
+  }
+
   /// update a SubviewOp with a target part
   /// create and return a new op if the SubviewOp has more than one use.
   ::mlir::Operation *updateTargetPart(::mlir::IRRewriter &builder,
@@ -139,6 +155,17 @@ struct DistCoalescePass : public ::imex::DistCoalesceBase<DistCoalescePass> {
           // back-propagation
           auto val = op.getSource();
           builder.setInsertionPointAfter(op);
+
+          auto tmp = tOffs[0].getDefiningOp();
+          auto &dom = this->getAnalysis<::mlir::DominanceInfo>();
+          if (!dom.dominates(tmp, op)) {
+            if (canMoveAfter(dom, tmp, op)) {
+              tmp->moveAfter(op);
+              builder.setInsertionPointAfter(tmp);
+            } else {
+              assert(!"Not implemented");
+            }
+          }
           return builder.create<::imex::dist::RePartitionOp>(
               op->getLoc(), val.getType(), val, tOffs, tSizes);
         }
@@ -172,21 +199,6 @@ struct DistCoalescePass : public ::imex::DistCoalesceBase<DistCoalescePass> {
       op->setAttr(sSzsName, builder.getDenseI32ArrayAttr(sSzs));
     }
     return nullptr;
-  }
-
-  /// @return if op1 can be moved directly after op2
-  bool canMoveAfter(::mlir::DominanceInfo &dom, ::mlir::Operation *op1,
-                    ::mlir::Operation *op2) {
-    assert(op2 != op1);
-    if (dom.dominates(op2, op1)) {
-      for (auto o : op1->getOperands()) {
-        auto dOp = o.getDefiningOp();
-        if (dOp && !dom.dominates(dOp, op2)) {
-          return false;
-        }
-      }
-    }
-    return true;
   }
 
   /// entry point for back propagation of target parts, starting with
@@ -236,7 +248,7 @@ struct DistCoalescePass : public ::imex::DistCoalesceBase<DistCoalescePass> {
     nOp = nullptr;
     if (auto typedOp = ::mlir::dyn_cast<::imex::dist::SubviewOp>(op)) {
       val = typedOp.getSource();
-      updateTargetPart(builder, typedOp, tOffs, tSizes);
+      nOp = updateTargetPart(builder, typedOp, tOffs, tSizes);
     } else if (auto typedOp =
                    ::mlir::dyn_cast<::imex::dist::RePartitionOp>(op)) {
       // continue even if already deleted in case different target parts are
@@ -260,6 +272,49 @@ struct DistCoalescePass : public ::imex::DistCoalesceBase<DistCoalescePass> {
                                          toDelete)
                  : n;
   }
+
+#if HAVE_KDYNAMIC_SIZED_OPS
+  template <typename T, typename GETDST, typename GETDSTMUTABLE>
+  void fuseDynamicSizedOps(T &typedOp, GETDST getDst,
+                           GETDSTMUTABLE getDstMutable) {
+    // Let's try to fuse a InsertSlice/LocalTargetOfSliceOp with a Subview if
+    // InsertSlice refers to the full view
+    auto slcOffs = typedOp.getOffsets();
+    auto slcSizes = typedOp.getSizes();
+    auto slcStrides = typedOp.getStrides();
+    auto rank = slcOffs.size();
+    bool full = true;
+    // check if destination of op is a subview
+    if (auto vOp =
+            getDst(typedOp).template getDefiningOp<::imex::dist::SubviewOp>()) {
+      // this works only if all sizes a dynamic, all offs are 0 an all strides
+      // are 1
+      for (size_t i = 0; i < rank; ++i) {
+        if (auto cval = ::mlir::getConstantIntValue(slcSizes[i]);
+            !cval || cval != ::mlir::ShapedType::kDynamic) {
+          full = false;
+        }
+        if (auto cval = ::mlir::getConstantIntValue(slcOffs[i]);
+            !cval || cval != 0) {
+          full = false;
+        }
+        if (auto cval = ::mlir::getConstantIntValue(slcStrides[i]);
+            !cval || cval != 1) {
+          full = false;
+        }
+      }
+      if (full) {
+        getDstMutable(typedOp).assign(vOp.getSource());
+        typedOp.getOffsetsMutable().assign(vOp.getOffsets());
+        typedOp.getSizesMutable().assign(vOp.getSizes());
+        typedOp.getStridesMutable().assign(vOp.getStrides());
+      }
+      if (vOp->use_empty()) {
+        vOp->erase();
+      }
+    }
+  }
+#endif // FUSE_DYN_SIZED_OPS
 
   // This pass tries to combine multiple RePartitionOps into one.
   // Dependent operations (like SubviewOp) get adequately annotated.
@@ -289,10 +344,25 @@ struct DistCoalescePass : public ::imex::DistCoalesceBase<DistCoalescePass> {
     });
 
     // store all RePartitionOps with target in vector
-    root->walk([&](::imex::dist::RePartitionOp op) {
-      if (!op.getTargetOffsets().empty()) {
-        rpOps.emplace_back(op);
+    root->walk([&](::mlir::Operation *op) {
+      if (auto typedOp = ::mlir::dyn_cast<::imex::dist::RePartitionOp>(op)) {
+        if (!typedOp.getTargetOffsets().empty()) {
+          rpOps.emplace_back(typedOp);
+        }
       }
+#if HAVE_KDYNAMIC_SIZED_OPS
+      else if (auto typedOp =
+                   ::mlir::dyn_cast<::imex::dist::InsertSliceOp>(op)) {
+        fuseDynamicSizedOps(
+            typedOp, [](auto typedOp) { return typedOp.getDestination(); },
+            [](auto typedOp) { return typedOp.getDestinationMutable(); });
+      } else if (auto typedOp =
+                     ::mlir::dyn_cast<::imex::dist::LocalTargetOfSliceOp>(op)) {
+        fuseDynamicSizedOps(
+            typedOp, [](auto typedOp) { return typedOp.getDTensor(); },
+            [](auto typedOp) { return typedOp.getDTensorMutable(); });
+      }
+#endif
     });
 
     auto &dom = this->getAnalysis<::mlir::DominanceInfo>();
@@ -412,7 +482,8 @@ struct DistCoalescePass : public ::imex::DistCoalesceBase<DistCoalescePass> {
                       tOffs = lPart.getLOffsets();
                       tSizes = lPart.getLShape();
                       bbIPnt = lPart;
-                      updateTargetPart(builder, e, tOffs, tSizes);
+                      auto nop = updateTargetPart(builder, e, tOffs, tSizes);
+                      assert(!nop);
                     }
 
                     auto rank = tOffs.size();
@@ -435,6 +506,12 @@ struct DistCoalescePass : public ::imex::DistCoalesceBase<DistCoalescePass> {
                       combined->setOperands(1, rank, bbOffs);
                       combined->setOperands(1 + rank, rank, bbSizes);
                     } else {
+                      for (auto o : bbOffs) {
+                        assert(dom.dominates(o.getDefiningOp(), bbIPnt));
+                      }
+                      for (auto o : bbSizes) {
+                        assert(dom.dominates(o.getDefiningOp(), bbIPnt));
+                      }
                       combined = builder.create<::imex::dist::RePartitionOp>(
                           loc, base->getResult(0).getType(), base->getResult(0),
                           bbOffs, bbSizes);
