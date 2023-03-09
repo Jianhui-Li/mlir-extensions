@@ -103,6 +103,9 @@ struct DistCoalescePass : public ::imex::DistCoalesceBase<DistCoalescePass> {
       return getBase(op.getSource());
     } else if (auto op = val.getDefiningOp<::imex::dist::InsertSliceOp>()) {
       return getBase(op.getDestination());
+    } else if (auto op =
+                   val.getDefiningOp<::mlir::UnrealizedConversionCastOp>()) {
+      return op;
     } else {
       std::cerr << "oops. Unexpected op found: ";
       const_cast<::mlir::Value &>(val).dump();
@@ -166,6 +169,7 @@ struct DistCoalescePass : public ::imex::DistCoalesceBase<DistCoalescePass> {
               assert(!"Not implemented");
             }
           }
+          assert(tOffs.size() == tSizes.size() && tOffs.size() < 3);
           return builder.create<::imex::dist::RePartitionOp>(
               op->getLoc(), val.getType(), val, tOffs, tSizes);
         }
@@ -336,12 +340,28 @@ struct DistCoalescePass : public ::imex::DistCoalesceBase<DistCoalescePass> {
 
     ::std::set<::imex::dist::RePartitionOp> rpToElimNew;
     ::mlir::SmallVector<::imex::dist::RePartitionOp> rpOps;
+    ::mlir::Operation *firstOp;
 
     // store all RePartitionOps with target in vector
     root->walk([&](::mlir::Operation *op) {
-      builder.setInsertionPoint(op);
+      firstOp = op;
       return ::mlir::WalkResult::interrupt();
     });
+    builder.setInsertionPoint(firstOp);
+
+    // insert temporary casts for block args so that we have a base operation
+    ::mlir::SmallVector<::mlir::UnrealizedConversionCastOp> dummyCasts;
+    for (::mlir::Block &block : root) {
+      for (::mlir::BlockArgument &arg : block.getArguments()) {
+        if (arg.getType().dyn_cast<::imex::dist::DistTensorType>() &&
+            !arg.use_empty()) {
+          auto op = builder.create<::mlir::UnrealizedConversionCastOp>(
+              builder.getUnknownLoc(), arg.getType(), arg);
+          arg.replaceAllUsesExcept(op.getResult(0), op);
+          dummyCasts.emplace_back(op);
+        }
+      }
+    }
 
     // store all RePartitionOps with target in vector
     root->walk([&](::mlir::Operation *op) {
@@ -400,6 +420,8 @@ struct DistCoalescePass : public ::imex::DistCoalesceBase<DistCoalescePass> {
         val = typedOp.getBase();
       }
       if (val) {
+        mlir::OpBuilder::InsertionGuard guard(builder);
+        builder.setInsertionPoint(firstOp);
         auto base = getBase(val);
         opsGroups[base].emplace_back(op);
       }
@@ -474,11 +496,14 @@ struct DistCoalescePass : public ::imex::DistCoalesceBase<DistCoalescePass> {
                     builder.setInsertionPointAfter(bbIPnt);
                     ::mlir::ValueRange tOffs = e.getTargetOffsets();
                     ::mlir::ValueRange tSizes = e.getTargetSizes();
+
                     if (tOffs.empty()) {
                       assert(tSizes.empty());
+                      auto eSzs = getMixedAsValues(loc, builder, e.getSizes(),
+                                                   e.getStaticSizes());
                       auto lPart =
                           builder.create<::imex::dist::LocalPartitionOp>(
-                              loc, nProcs, pRank, e.getSizes());
+                              loc, nProcs, pRank, eSzs);
                       tOffs = lPart.getLOffsets();
                       tSizes = lPart.getLShape();
                       bbIPnt = lPart;
@@ -486,7 +511,6 @@ struct DistCoalescePass : public ::imex::DistCoalesceBase<DistCoalescePass> {
                       assert(!nop);
                     }
 
-                    auto rank = tOffs.size();
                     // extend local bounding box
                     auto _offs = getMixedAsValues(loc, builder, e.getOffsets(),
                                                   e.getStaticOffsets());
@@ -502,7 +526,10 @@ struct DistCoalescePass : public ::imex::DistCoalesceBase<DistCoalescePass> {
                     bbOffs = bbox.getResultOffsets();
                     bbSizes = bbox.getResultSizes();
                     bbIPnt = bbox;
+                    assert(bbOffs.size() == bbSizes.size() &&
+                           bbOffs.size() < 3);
                     if (combined) {
+                      auto rank = bbOffs.size();
                       combined->setOperands(1, rank, bbOffs);
                       combined->setOperands(1 + rank, rank, bbSizes);
                     } else {
@@ -566,6 +593,12 @@ struct DistCoalescePass : public ::imex::DistCoalesceBase<DistCoalescePass> {
         if (j == grpP.second.end())
           break;
       }
+    }
+
+    // Get rid of dummy casts
+    for (auto op : dummyCasts) {
+      op.getResult(0).replaceAllUsesWith(op->getOperand(0));
+      builder.eraseOp(op);
     }
   }
 };

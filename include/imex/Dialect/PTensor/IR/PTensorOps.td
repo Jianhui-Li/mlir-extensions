@@ -341,9 +341,7 @@ def SubviewOp : PTensor_OpWithOffsetSizesAndStrides<"subview", [
 
   let extraClassDeclaration = extraBaseClassDeclaration # [{
     /// Returns the type of the base tensor operand.
-    PTensorType getSourceType() {
-      return getSource().getType().cast<PTensorType>();
-    }
+    PTensorType getSourceType();
 
     /// The result of an subview is always a tensor.
     PTensorType getType() {

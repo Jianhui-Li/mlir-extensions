@@ -14,6 +14,7 @@
 ///
 //===----------------------------------------------------------------------===//
 
+#include <imex/Dialect/Dist/IR/DistOps.h>
 #include <imex/Dialect/PTensor/IR/PTensorOps.h>
 #include <mlir/IR/BuiltinTypes.h>
 #include <mlir/IR/Dialect.h>
@@ -82,6 +83,19 @@ imex::ptensor::PTensorType imex::ptensor::SubviewOp::inferRankReducedResultType(
       resultShape, sourceType, staticOffsets, staticSizes, staticStrides);
 }
 
+/// Returns the type of the base tensor operand.
+imex::ptensor::PTensorType imex::ptensor::SubviewOp::getSourceType() {
+  auto sourceType =
+      getSource().getType().dyn_cast<imex::ptensor::PTensorType>();
+  if (!sourceType) {
+    sourceType = getSource()
+                     .getType()
+                     .dyn_cast<imex::dist::DistTensorType>()
+                     .getPTensorType();
+  }
+  return sourceType;
+}
+
 // Build a SubViewOp with mixed static and dynamic entries and custom result
 // type. If the type passed is nullptr, it is inferred.
 void imex::ptensor::SubviewOp::build(
@@ -96,7 +110,12 @@ void imex::ptensor::SubviewOp::build(
   dispatchIndexOpFoldResults(offsets, dynamicOffsets, staticOffsets);
   dispatchIndexOpFoldResults(sizes, dynamicSizes, staticSizes);
   dispatchIndexOpFoldResults(strides, dynamicStrides, staticStrides);
-  auto sourceType = source.getType().cast<imex::ptensor::PTensorType>();
+  auto sourceType = source.getType().dyn_cast<imex::ptensor::PTensorType>();
+  if (!sourceType) {
+    sourceType = source.getType()
+                     .dyn_cast<imex::dist::DistTensorType>()
+                     .getPTensorType();
+  }
   // Structuring implementation this way avoids duplication between builders.
   if (!resultType) {
     resultType = imex::ptensor::SubviewOp::inferResultType(

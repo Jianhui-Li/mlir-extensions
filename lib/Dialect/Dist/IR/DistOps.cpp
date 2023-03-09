@@ -58,5 +58,7 @@ namespace dist {
   return getPTensorType().getElementType();
 }
 
+int64_t DistTensorType::getRank() { return getPTensorType().getRank(); }
+
 } // namespace dist
 } // namespace imex

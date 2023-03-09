@@ -570,6 +570,7 @@ struct EWBinOpLowering
       // fail if not, will be retried if operands get converted elsewhere
       return ::mlir::failure();
     }
+
     // we expect tensorType as operands
     auto lhsMRTyp = lhsPtTyp.getMemRefType();
     auto rhsMRTyp = rhsPtTyp.getMemRefType();

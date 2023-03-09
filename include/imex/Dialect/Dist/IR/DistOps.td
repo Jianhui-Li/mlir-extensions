@@ -61,6 +61,7 @@ def Dist_Tensor : Dist_Type<"DistTensor", "dtensor">
 
   let extraClassDeclaration = [{
     ::mlir::Type getElementType();
+    int64_t getRank();
   }];
 }
 

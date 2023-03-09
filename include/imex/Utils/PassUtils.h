@@ -277,20 +277,18 @@ inline auto createExtractPtrFromMemRefFromValues(::mlir::OpBuilder &builder,
 // when possible, move up operations of a certain type so that they are
 // close together.
 template <typename OP, typename SELECT, typename GETINPUTS,
-          typename SINGULARIZE, typename HAS_WRITES>
+          typename SINGULARIZE>
 void groupOps(::mlir::DominanceInfo &domA, ::mlir::Operation *root,
-              SELECT select, GETINPUTS getInputs, SINGULARIZE singularize,
-              HAS_WRITES has_writes) {
+              SELECT select, GETINPUTS getInputs,
+              SINGULARIZE singularize = nullptr) {
 
   llvm::SmallVector<OP> dominators, dominators2;
 
   // Find all operations of type OP within root
-  root->walk([&](::mlir::Operation *op) {
-    if (OP typedOp = ::mlir::dyn_cast<OP>(op)) {
-      if (select(typedOp)) {
-        dominators.emplace_back(typedOp);
-        return;
-      }
+  root->walk([&](OP op) {
+    if (select(op)) {
+      dominators.emplace_back(op);
+      return;
     }
   });
 
@@ -303,26 +301,29 @@ void groupOps(::mlir::DominanceInfo &domA, ::mlir::Operation *root,
     auto iPnt = dominator;
     while (dominators.size() > 1) {
       auto op = dominators.pop_back_val();
-      if (domA.properlyDominates(dominator, op, false)
-          /* && !has_writes(dominator, op, domA) */) {
+      if (domA.properlyDominates(dominator, op, false)) {
         bool can_move = true;
         auto oprnds = getInputs(op);
         for (auto d : oprnds) {
           auto defOp = d.getDefiningOp();
-          if (!domA.properlyDominates(defOp, dominator)) {
+          if (defOp && !domA.properlyDominates(defOp, dominator)) {
             can_move = false;
             break;
           }
         }
         if (can_move) {
-          if (singularize(dominator, op)) {
-            op->replaceAllUsesWith(dominator);
-            op->erase();
-          } else {
-            op->moveAfter(iPnt);
-            iPnt = op;
+          if constexpr (singularize != nullptr) {
+            if (singularize(dominator, op)) {
+              op->replaceAllUsesWith(dominator);
+              op->erase();
+              continue;
+            }
           }
-          continue;
+          op->moveAfter(iPnt);
+          iPnt = op;
+          if constexpr (singularize == nullptr) {
+            continue;
+          }
         }
       }
       // not dominated or not movable

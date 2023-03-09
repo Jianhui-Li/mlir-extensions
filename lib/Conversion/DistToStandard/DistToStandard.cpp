@@ -590,10 +590,15 @@ struct LocalPartitionOpConverter
                   ::imex::dist::LocalPartitionOp::Adaptor adaptor,
                   ::mlir::ConversionPatternRewriter &rewriter) const override {
     // FIXME: non-even partitions, ndims
-    auto loc = op.getLoc();
     auto gShape = adaptor.getGShape();
     int64_t rank = (int64_t)gShape.size();
 
+    if (rank == 0) {
+      rewriter.eraseOp(op);
+      return ::mlir::success();
+    }
+
+    auto loc = op.getLoc();
     auto sz = easyIdx(loc, rewriter, gShape.front());
     auto np = easyIdx(loc, rewriter, adaptor.getNumProcs());
     auto pr = easyIdx(loc, rewriter, adaptor.getPRank());
@@ -1099,15 +1104,13 @@ struct ConvertDistToStandardPass
         [](::mlir::func::CallOp &op) {
           return op.getCallee() == "_idtr_nprocs";
         },
-        [](::mlir::func::CallOp &op) { return op.getOperands(); }, singularize,
-        [](auto, auto, auto &) { return false; });
+        [](::mlir::func::CallOp &op) { return op.getOperands(); }, singularize);
     groupOps<::mlir::func::CallOp>(
         this->getAnalysis<::mlir::DominanceInfo>(), getOperation(),
         [](::mlir::func::CallOp &op) {
           return op.getCallee() == "_idtr_prank";
         },
-        [](::mlir::func::CallOp &op) { return op.getOperands(); }, singularize,
-        [](auto, auto, auto &) { return false; });
+        [](::mlir::func::CallOp &op) { return op.getOperands(); }, singularize);
   }
 };
 
