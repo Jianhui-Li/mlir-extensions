@@ -132,7 +132,7 @@ def InitDistTensorOp : Dist_Op<"init_dist_tensor", [SameVariadicOperandSize, Pur
     ];
 }
 
-def GlobalShapeOfOp : Dist_Op<"global_shape_of", []> {
+def GlobalShapeOfOp : Dist_Op<"global_shape_of", [Pure]> {
     let summary = "Get global shape of distributed tensor.";
     let arguments = (ins AnyType:$d_tensor);
     let results = (outs Variadic<Index>:$g_shape);
@@ -147,7 +147,7 @@ def GlobalShapeOfOp : Dist_Op<"global_shape_of", []> {
     ];
 }
 
-def LocalOffsetsOfOp : Dist_Op<"local_offsets_of", []> {
+def LocalOffsetsOfOp : Dist_Op<"local_offsets_of", [Pure]> {
     let summary = "Get local offsets of distributed tensor.";
     let arguments = (ins AnyType:$d_tensor);
     let results = (outs Variadic<Index>:$l_offsets);
@@ -162,7 +162,7 @@ def LocalOffsetsOfOp : Dist_Op<"local_offsets_of", []> {
     ];
 }
 
-def LocalTensorOfOp : Dist_Op<"local_tensor_of", []> {
+def LocalTensorOfOp : Dist_Op<"local_tensor_of", [Pure]> {
     let summary = "Get local tensor of distributed tensor.";
     let arguments = (ins AnyType:$d_tensor);
     let results = (outs AnyType:$l_tensor);
@@ -175,7 +175,7 @@ def LocalTensorOfOp : Dist_Op<"local_tensor_of", []> {
     ];
 }
 
-def TeamOfOp : Dist_Op<"team_of", []> {
+def TeamOfOp : Dist_Op<"team_of", [Pure]> {
     let summary = "Get team of distributed tensor.";
     let arguments = (ins AnyType:$d_tensor);
     let results = (outs AnyType:$team);
@@ -187,7 +187,7 @@ def TeamOfOp : Dist_Op<"team_of", []> {
     ];
 }
 
-def IsBalancedOp : Dist_Op<"is_balanced", []> {
+def IsBalancedOp : Dist_Op<"is_balanced", [Pure]> {
     let summary = "Determines whether the tensor is balanced or not.";
     let arguments = (ins AnyType:$d_tensor);
     let results = (outs Index:$is_balanced);

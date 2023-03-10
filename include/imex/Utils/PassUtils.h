@@ -171,8 +171,9 @@ inline auto createEmptyTensor(::mlir::OpBuilder &builder, ::mlir::Location loc,
   ::mlir::SmallVector<int64_t> staticSizes;
   ::mlir::SmallVector<mlir::Value> dynamicSizes;
   dispatchIndexValues(shp, dynamicSizes, staticSizes);
-  return builder.createOrFold<::mlir::tensor::EmptyOp>(loc, staticSizes, elType,
-                                                       dynamicSizes);
+  return builder
+      .create<::mlir::tensor::EmptyOp>(loc, staticSizes, elType, dynamicSizes)
+      .getResult();
 }
 
 /// get dyn-sized mlir::RankedTensorType for given rank and elType

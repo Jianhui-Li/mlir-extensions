@@ -135,7 +135,7 @@ class PTensor_Op<string mnemonic, list<Trait> traits = []> :
     Op<PTensor_Dialect, mnemonic, traits>;
 
 
-def MkPTensorOp : PTensor_Op<"init_ptensor", []> {
+def MkPTensorOp : PTensor_Op<"init_ptensor", [Pure]> {
     let summary = "Create a new PTensor from tensor, device info";
     let description = [{
         High-level operation to create a new PTensor.
@@ -169,7 +169,7 @@ def MkPTensorOp : PTensor_Op<"init_ptensor", []> {
     ];
 }
 
-def ExtractMemRefOp : PTensor_Op<"extract_tensor", []> {
+def ExtractMemRefOp : PTensor_Op<"extract_tensor", [Pure]> {
     let summary = "Extract MemRef from a PTensor";
     let description = [{
         High-level operation to extract the MemRef from the given PTensor.

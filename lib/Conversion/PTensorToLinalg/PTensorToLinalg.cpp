@@ -147,6 +147,10 @@ struct ExtractTensorLowering
       }
       assert(inpOp);
       assert(inpOp.getOperands().front().getType().isa<::mlir::MemRefType>());
+      // std::cerr << "mrOpOp: ";
+      // inpOp->getOperand(0).getDefiningOp()->getOperand(0).dump(); std::cerr
+      // << "mrOp: "; inpOp->getOperands().front().dump(); std::cerr << "mr: ";
+      // inpOp->dump();
       rewriter.replaceOp(op, inpOp.getOperands()[0]);
     }
     return ::mlir::success();
@@ -571,22 +575,20 @@ struct EWBinOpLowering
       return ::mlir::failure();
     }
 
+    // get the input as tensors
+    auto lhsMR = adaptor.getLhs();
+    auto rhsMR = adaptor.getRhs();
+    auto lhsTnsr =
+        rewriter.create<::mlir::bufferization::ToTensorOp>(loc, lhsMR);
+    auto rhsTnsr =
+        rewriter.create<::mlir::bufferization::ToTensorOp>(loc, rhsMR);
+
     // we expect tensorType as operands
-    auto lhsMRTyp = lhsPtTyp.getMemRefType();
-    auto rhsMRTyp = rhsPtTyp.getMemRefType();
+    auto lhsMRTyp = lhsMR.getType().cast<::mlir::MemRefType>();
+    auto rhsMRTyp = rhsMR.getType().cast<::mlir::MemRefType>();
     auto elTyp = lhsMRTyp.getElementType();
     auto lhsRank = lhsMRTyp.getRank();
     auto rhsRank = rhsMRTyp.getRank();
-
-    // get the input as tensors
-    auto lhsMR = rewriter.create<::imex::ptensor::ExtractMemRefOp>(
-        loc, lhsMRTyp, op.getLhs());
-    auto rhsMR = rewriter.create<::imex::ptensor::ExtractMemRefOp>(
-        loc, rhsMRTyp, op.getRhs());
-    auto lhsTnsr = rewriter.create<::mlir::bufferization::ToTensorOp>(
-        loc, lhsPtTyp.getTensorType(), lhsMR);
-    auto rhsTnsr = rewriter.create<::mlir::bufferization::ToTensorOp>(
-        loc, rhsPtTyp.getTensorType(), rhsMR);
 
     // determine broadcasted shape of result
     auto idxType = rewriter.getIndexType();
@@ -700,9 +702,8 @@ struct ReductionOpLowering
     }
 
     // we expect tensorType as operands
-    auto inpTnsrTyp = inpPtTyp.getMemRefType();
-    auto inpTnsr = rewriter.create<::imex::ptensor::ExtractMemRefOp>(
-        loc, inpTnsrTyp, op.getInput());
+    auto inpTnsr = adaptor.getInput();
+    auto inpTnsrTyp = inpTnsr.getType().cast<::mlir::MemRefType>();
 
     // Get signless operands into vec
     llvm::SmallVector<mlir::Value, 1> oprnds = {
