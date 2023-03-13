@@ -237,6 +237,51 @@ struct DistCoalescePass : public ::imex::DistCoalesceBase<DistCoalescePass> {
     return backPropagatePart(builder, rpOp, offs, szs, nOp, toDelete);
   }
 
+  /// clone subviewops which are returned and mark them "final"
+  /// Needed to protect them from being "redirected" to a reparitioned copy
+  void backPropagateReturn(::mlir::IRRewriter &builder,
+                           ::mlir::func::ReturnOp retOp) {
+    mlir::OpBuilder::InsertionGuard guard(builder);
+    builder.setInsertionPoint(retOp);
+    int i = -1;
+    bool altered = false;
+    ::mlir::SmallVector<::mlir::Value> oprnds;
+    ::mlir::SmallVector<::mlir::Operation *> toErase;
+    for (auto val : retOp->getOperands()) {
+      ++i;
+      if (val.getType().isa<::imex::dist::DistTensorType>()) {
+        bool oneUse = true;
+        // "skip" casts and observe if this is a single-use chain
+        auto castOp = val.getDefiningOp<::mlir::UnrealizedConversionCastOp>();
+        while (castOp && castOp.getInputs().size() == 1) {
+          if (!castOp->hasOneUse()) {
+            oneUse = false;
+          }
+          val = castOp.getInputs().front();
+          castOp = val.getDefiningOp<::mlir::UnrealizedConversionCastOp>();
+        }
+
+        if (auto typedOp = val.getDefiningOp<::imex::dist::SubviewOp>()) {
+          auto iOp = builder.clone(*typedOp);
+          iOp->setAttr("final", builder.getUnitAttr());
+          if (oneUse && typedOp->hasOneUse()) {
+            toErase.emplace_back(typedOp);
+          }
+          oprnds.emplace_back(iOp->getResult(0));
+          altered = true;
+          continue;
+        }
+      }
+      oprnds.emplace_back(val);
+    }
+    if (altered) {
+      retOp->setOperands(oprnds);
+      for (auto op : toErase) {
+        op->erase();
+      }
+    }
+  }
+
   /// The actual back propagation of target parts
   /// if meeting a supported op, recursively gets defining ops and back
   /// propagates as it follows only supported ops, all other ops act as
@@ -340,6 +385,7 @@ struct DistCoalescePass : public ::imex::DistCoalesceBase<DistCoalescePass> {
 
     ::std::set<::imex::dist::RePartitionOp> rpToElimNew;
     ::mlir::SmallVector<::imex::dist::RePartitionOp> rpOps;
+    ::mlir::SmallVector<::mlir::func::ReturnOp> retOps;
     ::mlir::Operation *firstOp;
 
     // store all RePartitionOps with target in vector
@@ -369,6 +415,8 @@ struct DistCoalescePass : public ::imex::DistCoalesceBase<DistCoalescePass> {
         if (!typedOp.getTargetOffsets().empty()) {
           rpOps.emplace_back(typedOp);
         }
+      } else if (auto typedOp = ::mlir::dyn_cast<::mlir::func::ReturnOp>(op)) {
+        retOps.emplace_back(typedOp);
       }
 #if HAVE_KDYNAMIC_SIZED_OPS
       else if (auto typedOp =
@@ -384,6 +432,11 @@ struct DistCoalescePass : public ::imex::DistCoalesceBase<DistCoalescePass> {
       }
 #endif
     });
+
+    for (auto retOp : retOps) {
+      backPropagateReturn(builder, retOp);
+    }
+    retOps.clear();
 
     auto &dom = this->getAnalysis<::mlir::DominanceInfo>();
 
@@ -473,6 +526,9 @@ struct DistCoalescePass : public ::imex::DistCoalesceBase<DistCoalescePass> {
           // iterate group
           for (auto i = grp.begin(); i != grp.end(); ++i) {
             auto e = ::mlir::dyn_cast<::imex::dist::SubviewOp>(*i);
+            if (e && e->hasAttr("final")) {
+              continue;
+            }
             auto rp = ::mlir::dyn_cast<::imex::dist::RePartitionOp>(*i);
             // check if we can move current op up
             if (dom.dominates(fOp, *i)) {
