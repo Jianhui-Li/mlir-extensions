@@ -390,8 +390,11 @@ struct DistCoalescePass : public ::imex::DistCoalesceBase<DistCoalescePass> {
 
     // store all RePartitionOps with target in vector
     root->walk([&](::mlir::Operation *op) {
-      firstOp = op;
-      return ::mlir::WalkResult::interrupt();
+      if (::mlir::isa<::imex::dist::DistDialect>(op->getDialect())) {
+        firstOp = op;
+        return ::mlir::WalkResult::interrupt();
+      }
+      return ::mlir::WalkResult::advance();
     });
     builder.setInsertionPoint(firstOp);
 
@@ -412,7 +415,11 @@ struct DistCoalescePass : public ::imex::DistCoalesceBase<DistCoalescePass> {
     // store all RePartitionOps with target in vector
     root->walk([&](::mlir::Operation *op) {
       if (auto typedOp = ::mlir::dyn_cast<::imex::dist::RePartitionOp>(op)) {
-        if (!typedOp.getTargetOffsets().empty()) {
+        if (typedOp.getTargetOffsets().empty()) {
+          if (is_temp(typedOp)) {
+            rpToElimNew.emplace(typedOp);
+          }
+        } else {
           rpOps.emplace_back(typedOp);
         }
       } else if (auto typedOp = ::mlir::dyn_cast<::mlir::func::ReturnOp>(op)) {
@@ -482,7 +489,7 @@ struct DistCoalescePass : public ::imex::DistCoalesceBase<DistCoalescePass> {
 
     // outer loop iterates base over base pointers
     for (auto grpP : opsGroups) {
-      if (grpP.second.size() < 1)
+      if (grpP.second.empty())
         continue;
 
       auto &base = grpP.first;
