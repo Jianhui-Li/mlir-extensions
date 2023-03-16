@@ -43,8 +43,10 @@
 #include <mlir/Dialect/LLVMIR/LLVMDialect.h>
 #include <mlir/Dialect/Linalg/IR/Linalg.h>
 #include <mlir/Dialect/Linalg/Utils/Utils.h>
+#include <mlir/Dialect/Math/IR/Math.h>
 #include <mlir/Dialect/Shape/IR/Shape.h>
 #include <mlir/Dialect/Tensor/IR/Tensor.h>
+#include <mlir/Dialect/Tosa/IR/TosaOps.h>
 #include <mlir/Pass/Pass.h>
 
 #include <iostream>
@@ -511,11 +513,11 @@ static BodyType getBodyBuilder(::imex::ptensor::EWBinOpId binOp,
   switch (binOp) {
   case ptensor::ADD:
     return buildTrivial<mlir::arith::AddIOp, mlir::arith::AddFOp>(typ);
-  // case ptensor::ATAN2] =
+  case ptensor::ATAN2:
+    return buildTrivial<void, mlir::math::Atan2Op>(typ);
   case ptensor::FLOOR_DIVIDE:
     return buildTrivial<mlir::arith::FloorDivSIOp>(typ);
   // case ptensor::LOGADDEXP] =
-  // case ptensor::LSHIFT] =
   // case ptensor::MATMUL] =
   case ptensor::MAXIMUM:
     return buildTrivial<mlir::arith::MaxSIOp, mlir::arith::MaxFOp>(typ);
@@ -525,28 +527,62 @@ static BodyType getBodyBuilder(::imex::ptensor::EWBinOpId binOp,
     return buildTrivial<mlir::arith::RemSIOp, mlir::arith::RemFOp>(typ);
   case ptensor::MULTIPLY:
     return buildTrivial<mlir::arith::MulIOp, mlir::arith::MulFOp>(typ);
-  // case ptensor::POW] =
+  case ptensor::POWER:
+    // FIXME math::PowFOp is illegal in convert-math-to-funcs
+    return buildTrivial<mlir::math::IPowIOp, void>(typ);
   case ptensor::SUBTRACT:
     return buildTrivial<mlir::arith::SubIOp, mlir::arith::SubFOp>(typ);
   // case ptensor::TRUE_DIVIDE] =
-  // case ptensor::BITWISE_AND] =
   // case ptensor::BITWISE_LEFT_SHIFT] =
-  // case ptensor::BITWISE_OR] =
   // case ptensor::BITWISE_RIGHT_SHIFT] =
-  // case ptensor::BITWISE_XOR] =
 
   // case ptensor::EQUAL] =
   // case ptensor::GREATER] =
   // case ptensor::GREATER_EQUAL] =
   // case ptensor::LESS] =
   // case ptensor::LESS_EQUAL] =
-  // case ptensor::LOGICAL_AND] =
-  // case ptensor::LOGICAL_OR] =
-  // case ptensor::LOGICAL_XOR] =
   // case ptensor::NOT_EQUAL] =
   default:
     assert(0 && "unsupported elementwise binary operation");
   };
+}
+
+bool createTosaOp(::imex::ptensor::EWBinOpId binOpId,
+                  ::mlir::ConversionPatternRewriter &rewriter,
+                  ::mlir::Location loc, ::mlir::TensorType returnType,
+                  ::mlir::bufferization::ToTensorOp lhs,
+                  ::mlir::bufferization::ToTensorOp rhs, ::mlir::Value &res) {
+  // emit TOSA op
+  switch (binOpId) {
+  case ptensor::BITWISE_AND:
+    res = rewriter.create<::mlir::tosa::BitwiseAndOp>(loc, returnType, lhs, rhs)
+              .getResult();
+    break;
+  case ptensor::BITWISE_OR:
+    res = rewriter.create<::mlir::tosa::BitwiseOrOp>(loc, returnType, lhs, rhs)
+              .getResult();
+    break;
+  case ptensor::BITWISE_XOR:
+    res = rewriter.create<::mlir::tosa::BitwiseXorOp>(loc, returnType, lhs, rhs)
+              .getResult();
+    break;
+  case ptensor::LOGICAL_AND:
+    res = rewriter.create<::mlir::tosa::LogicalAndOp>(loc, returnType, lhs, rhs)
+              .getResult();
+    break;
+  case ptensor::LOGICAL_OR:
+    res = rewriter.create<::mlir::tosa::LogicalOrOp>(loc, returnType, lhs, rhs)
+              .getResult();
+    break;
+  case ptensor::LOGICAL_XOR:
+    res = rewriter.create<::mlir::tosa::LogicalXorOp>(loc, returnType, lhs, rhs)
+              .getResult();
+    break;
+  default:
+    return false;
+  };
+
+  return true;
 }
 
 /// Convert PTensor's elementwise binary operations and their return type to
@@ -590,69 +626,77 @@ struct EWBinOpLowering
     auto lhsRank = lhsMRTyp.getRank();
     auto rhsRank = rhsMRTyp.getRank();
 
-    // determine broadcasted shape of result
-    auto idxType = rewriter.getIndexType();
     auto rank = static_cast<unsigned>(std::max(lhsRank, rhsRank));
-    auto lhsShape = rewriter.create<::mlir::shape::ShapeOfOp>(loc, lhsTnsr);
-    auto rhsShape = rewriter.create<::mlir::shape::ShapeOfOp>(loc, rhsTnsr);
-    auto resShapeType =
-        ::mlir::RankedTensorType::get(::std::array<int64_t, 1>{rank}, idxType);
-    auto resShape = rewriter.create<::mlir::shape::BroadcastOp>(
-        loc, resShapeType, lhsShape, rhsShape, ::mlir::StringAttr{});
-
-    // Init empty result tensor
-    llvm::SmallVector<::mlir::Value> resShapeV(rank);
-    for (unsigned i = 0; i < rank; ++i) {
-      auto idx = createIndex(loc, rewriter, i);
-      auto tmp =
-          rewriter.createOrFold<::mlir::shape::GetExtentOp>(loc, resShape, idx);
-      resShapeV[i] = rewriter.createOrFold<::mlir::shape::SizeToIndexOp>(
-          loc, rewriter.getIndexType(), tmp);
-    }
-    auto tensor = createEmptyTensor(rewriter, loc, elTyp, resShapeV);
     auto resMRTyp = getMemRefType(rewriter.getContext(), rank, elTyp);
 
-    // we need affine maps for linalg::generic
-    // as long as we have no proper support for rank-reduced sizes above Linalg,
-    // we can handle only
-    //   - explicitly rank-reduced inputs (such as explicit 0d tensors)
-    //   - shapes with static dim-sizes of 1
-    // FIXME: Dynamic dim-sizes of 1 are not properly handled
-    ::mlir::SmallVector<::mlir::AffineExpr> lhsExprs, rhsExprs, resExprs;
-    for (int i = 0; i < lhsRank; ++i) {
-      lhsExprs.emplace_back(lhsMRTyp.getDimSize(i) == 1
-                                ? rewriter.getAffineConstantExpr(0)
-                                : rewriter.getAffineDimExpr(i));
-    }
-    for (int i = 0; i < rhsRank; ++i) {
-      rhsExprs.emplace_back(rhsMRTyp.getDimSize(i) == 1
-                                ? rewriter.getAffineConstantExpr(0)
-                                : rewriter.getAffineDimExpr(i));
-    }
-    for (unsigned i = 0; i < rank; ++i) {
-      resExprs.emplace_back(rewriter.getAffineDimExpr(i));
-    }
-    auto maps =
-        ::mlir::AffineMap::inferFromExprList({lhsExprs, rhsExprs, resExprs});
-
-    // we just make all dims parallel
-    llvm::SmallVector<mlir::utils::IteratorType> iterators(
-        rank, ::mlir::utils::IteratorType::parallel);
-
-    // get the body builder for our binop and create genericop
-    // FIXME: make createParFor ready for this
     const ::imex::ptensor::EWBinOpId binOpId =
         (::imex::ptensor::EWBinOpId)adaptor.getOp()
             .cast<::mlir::IntegerAttr>()
             .getInt();
-    auto bodyBuilder = getBodyBuilder(binOpId, elTyp);
-    auto resTnsr = rewriter.create<::mlir::linalg::GenericOp>(
-        loc, tensor.getType(), ::mlir::ValueRange{lhsTnsr, rhsTnsr}, tensor,
-        maps, iterators, bodyBuilder);
 
+    ::mlir::Value resValue;
+    if (!createTosaOp(binOpId, rewriter, loc, lhsTnsr.getType(), lhsTnsr,
+                      rhsTnsr, resValue)) {
+      // generate linalg.generic loop
+
+      // determine broadcasted shape of result
+      auto idxType = rewriter.getIndexType();
+      auto lhsShape = rewriter.create<::mlir::shape::ShapeOfOp>(loc, lhsTnsr);
+      auto rhsShape = rewriter.create<::mlir::shape::ShapeOfOp>(loc, rhsTnsr);
+      auto resShapeType = ::mlir::RankedTensorType::get(
+          ::std::array<int64_t, 1>{rank}, idxType);
+      auto resShape = rewriter.create<::mlir::shape::BroadcastOp>(
+          loc, resShapeType, lhsShape, rhsShape, ::mlir::StringAttr{});
+
+      // Init empty result tensor
+      llvm::SmallVector<::mlir::Value> resShapeV(rank);
+      for (unsigned i = 0; i < rank; ++i) {
+        auto idx = createIndex(loc, rewriter, i);
+        auto tmp = rewriter.createOrFold<::mlir::shape::GetExtentOp>(
+            loc, resShape, idx);
+        resShapeV[i] = rewriter.createOrFold<::mlir::shape::SizeToIndexOp>(
+            loc, rewriter.getIndexType(), tmp);
+      }
+      auto tensor = createEmptyTensor(rewriter, loc, elTyp, resShapeV);
+
+      // we need affine maps for linalg::generic
+      // as long as we have no proper support for rank-reduced sizes above
+      // Linalg, we can handle only
+      //   - explicitly rank-reduced inputs (such as explicit 0d tensors)
+      //   - shapes with static dim-sizes of 1
+      // FIXME: Dynamic dim-sizes of 1 are not properly handled
+      ::mlir::SmallVector<::mlir::AffineExpr> lhsExprs, rhsExprs, resExprs;
+      for (int i = 0; i < lhsRank; ++i) {
+        lhsExprs.emplace_back(lhsMRTyp.getDimSize(i) == 1
+                                  ? rewriter.getAffineConstantExpr(0)
+                                  : rewriter.getAffineDimExpr(i));
+      }
+      for (int i = 0; i < rhsRank; ++i) {
+        rhsExprs.emplace_back(rhsMRTyp.getDimSize(i) == 1
+                                  ? rewriter.getAffineConstantExpr(0)
+                                  : rewriter.getAffineDimExpr(i));
+      }
+      for (unsigned i = 0; i < rank; ++i) {
+        resExprs.emplace_back(rewriter.getAffineDimExpr(i));
+      }
+      auto maps =
+          ::mlir::AffineMap::inferFromExprList({lhsExprs, rhsExprs, resExprs});
+
+      // we just make all dims parallel
+      llvm::SmallVector<mlir::utils::IteratorType> iterators(
+          rank, ::mlir::utils::IteratorType::parallel);
+
+      // get the body builder for our binop and create genericop
+      // FIXME: make createParFor ready for this
+      auto bodyBuilder = getBodyBuilder(binOpId, elTyp);
+      auto resTnsr = rewriter.create<::mlir::linalg::GenericOp>(
+          loc, tensor.getType(), ::mlir::ValueRange{lhsTnsr, rhsTnsr}, tensor,
+          maps, iterators, bodyBuilder);
+      resValue = resTnsr.getResult(0);
+    }
     // done. replace op with memref
-    rewriter.replaceOpWithNewOp<::mlir::bufferization::ToMemrefOp>(
-        op, resMRTyp, resTnsr.getResult(0));
+    rewriter.replaceOpWithNewOp<::mlir::bufferization::ToMemrefOp>(op, resMRTyp,
+                                                                   resValue);
 
     return ::mlir::success();
   }
@@ -797,8 +841,9 @@ struct ConvertPTensorToLinalgPass
     // ...into Linalg, Affine, Tensor, Arith
     target.addLegalDialect<
         ::mlir::linalg::LinalgDialect, ::mlir::AffineDialect,
-        ::mlir::arith::ArithDialect, ::mlir::memref::MemRefDialect,
-        ::mlir::tensor::TensorDialect, ::mlir::shape::ShapeDialect,
+        ::mlir::arith::ArithDialect, ::mlir::math::MathDialect,
+        ::mlir::memref::MemRefDialect, ::mlir::tensor::TensorDialect,
+        ::mlir::tosa::TosaDialect, ::mlir::shape::ShapeDialect,
         ::mlir::bufferization::BufferizationDialect, ::mlir::scf::SCFDialect>();
     target.addLegalOp<::mlir::UnrealizedConversionCastOp>(); // FIXME
     // make sure function boundaries use tensors (not PTensors)

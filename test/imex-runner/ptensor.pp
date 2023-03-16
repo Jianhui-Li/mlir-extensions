@@ -5,6 +5,7 @@ builtin.module(
     arith-bufferize
     func-bufferize
     func.func(
+        tosa-to-linalg
         empty-tensor-to-alloc-tensor
         scf-bufferize
         tensor-bufferize
@@ -17,6 +18,8 @@ builtin.module(
     canonicalize
     fold-memref-alias-ops
     expand-strided-metadata
+    convert-math-to-funcs
+    convert-math-to-libm
     lower-affine
     convert-scf-to-cf
     convert-memref-to-llvm

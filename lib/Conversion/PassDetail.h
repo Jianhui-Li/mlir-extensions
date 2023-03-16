@@ -65,6 +65,10 @@ namespace tensor {
 class TensorDialect;
 } // namespace tensor
 
+namespace tosa {
+class TosaDialect;
+} // namespace tosa
+
 namespace gpu {
 class GPUDialect;
 } // namespace gpu
