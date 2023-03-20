@@ -43,6 +43,11 @@
 
 using ::imex::ptensor::createDType;
 
+extern "C" {
+int _idtr_nprocs(void *) __attribute__((weak));
+int _idtr_prank(void *) __attribute__((weak));
+}
+
 namespace imex {
 namespace dist {
 namespace {
@@ -383,7 +388,7 @@ struct RuntimePrototypesOpConverter
   }
 };
 
-/// Convert ::imex::dist::NProcsOp into runtime call to _idtr_nprocs
+/// Convert ::imex::dist::NProcsOp into constant or runtime call to _idtr_nprocs
 struct NProcsOpConverter
     : public ::mlir::OpConversionPattern<::imex::dist::NProcsOp> {
   using ::mlir::OpConversionPattern<
@@ -393,13 +398,21 @@ struct NProcsOpConverter
   matchAndRewrite(::imex::dist::NProcsOp op,
                   ::imex::dist::NProcsOp::Adaptor adaptor,
                   ::mlir::ConversionPatternRewriter &rewriter) const override {
-    rewriter.replaceOpWithNewOp<::mlir::func::CallOp>(
-        op, "_idtr_nprocs", rewriter.getIndexType(), adaptor.getTeam());
+    auto team = adaptor.getTeam();
+    auto cval = ::mlir::getConstantIntValue(team);
+    // call runtime at compile time if available and team is constant
+    if (cval && _idtr_nprocs != NULL) {
+      auto np = _idtr_nprocs(reinterpret_cast<void *>(cval.value()));
+      rewriter.replaceOp(op, createIndex(op.getLoc(), rewriter, np));
+    } else {
+      rewriter.replaceOpWithNewOp<::mlir::func::CallOp>(
+          op, "_idtr_nprocs", rewriter.getIndexType(), adaptor.getTeam());
+    }
     return ::mlir::success();
   }
 };
 
-// Convert ::imex::dist::PRankOp into runtime call to _idtr_prank
+// Convert ::imex::dist::PRankOp into constant or runtime call to _idtr_prank
 struct PRankOpConverter
     : public ::mlir::OpConversionPattern<::imex::dist::PRankOp> {
   using ::mlir::OpConversionPattern<::imex::dist::PRankOp>::OpConversionPattern;
@@ -408,8 +421,16 @@ struct PRankOpConverter
   matchAndRewrite(::imex::dist::PRankOp op,
                   ::imex::dist::PRankOp::Adaptor adaptor,
                   ::mlir::ConversionPatternRewriter &rewriter) const override {
-    rewriter.replaceOpWithNewOp<::mlir::func::CallOp>(
-        op, "_idtr_prank", rewriter.getIndexType(), adaptor.getTeam());
+    auto team = adaptor.getTeam();
+    auto cval = ::mlir::getConstantIntValue(team);
+    // call runtime at compile time if available and team is constant
+    if (cval && _idtr_prank != NULL) {
+      auto pr = _idtr_prank(reinterpret_cast<void *>(cval.value()));
+      rewriter.replaceOp(op, createIndex(op.getLoc(), rewriter, pr));
+    } else {
+      rewriter.replaceOpWithNewOp<::mlir::func::CallOp>(
+          op, "_idtr_prank", rewriter.getIndexType(), adaptor.getTeam());
+    }
     return ::mlir::success();
   }
 };
