@@ -334,14 +334,18 @@ struct DistEWBinOpRWP : public RecOpRewritePattern<::imex::ptensor::EWBinOp> {
 
     // Repartition if necessary
     // FIXME: this breaks with dim-sizes==1, even if statically known
+    auto lhs = op.getLhs();
+    auto rhs = op.getRhs();
     auto rbLhs =
         lhsDTTyp.getPTensorType().getRank() == 0
-            ? op.getLhs()
-            : createRePartition(loc, rewriter, op.getLhs()); //, tOffs, tSizes);
+            ? lhs
+            : createRePartition(loc, rewriter, lhs); //, tOffs, tSizes);
     auto rbRhs =
-        rhsDTTyp.getPTensorType().getRank() == 0
-            ? op.getRhs()
-            : createRePartition(loc, rewriter, op.getRhs()); //, tOffs, tSizes);
+        rhs == lhs
+            ? rbLhs
+            : (rhsDTTyp.getPTensorType().getRank() == 0
+                   ? rhs
+                   : createRePartition(loc, rewriter, rhs)); //, tOffs, tSizes);
 
     // replace with dist version of ewbinop
     auto vDTTYp =

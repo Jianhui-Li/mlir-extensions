@@ -943,7 +943,8 @@ struct RePartitionOpConverter
         rewriter.create<::imex::ptensor::ExtractMemRefOp>(loc, bMRTyp, lTnsr);
     auto bMeta =
         rewriter.create<::mlir::memref::ExtractStridedMetadataOp>(loc, bMRef);
-    auto lDataPtr = createExtractPtrFromMemRef(rewriter, loc, bMRef, bMeta);
+    auto lDataPtr =
+        rewriter.create<::imex::ptensor::ExtractRawPtrOp>(loc, lTnsr);
     auto lShapePtr =
         createExtractPtrFromMemRefFromValues(rewriter, loc, bMeta.getSizes());
     auto lStridesPtr =
@@ -960,12 +961,8 @@ struct RePartitionOpConverter
     auto outTnsr = rewriter.create<::imex::ptensor::CreateOp>(
         loc, tSizes, ::imex::ptensor::fromMLIR(elTyp), nullptr, nullptr,
         nullptr); // FIXME device
-    auto outMRTyp = outTnsr.getType()
-                        .dyn_cast<::imex::ptensor::PTensorType>()
-                        .getMemRefType();
-    auto outMR = rewriter.create<::imex::ptensor::ExtractMemRefOp>(
-        loc, outMRTyp, outTnsr);
-    auto outPtr = createExtractPtrFromMemRef(rewriter, loc, outMR);
+    auto outPtr =
+        rewriter.create<::imex::ptensor::ExtractRawPtrOp>(loc, outTnsr);
 
     // call our runtime function to redistribute data across processes
     auto rankV = createIndex(loc, rewriter, rank);
