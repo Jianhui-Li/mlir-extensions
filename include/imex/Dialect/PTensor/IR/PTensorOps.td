@@ -189,6 +189,23 @@ def ExtractMemRefOp : PTensor_Op<"extract_tensor", [Pure]> {
     ];
 }
 
+def ExtractRawPtrOp : PTensor_Op<"extract_raw_ptr", [Pure]> {
+    let summary = "Extract the raw memref pointer from a given PTensor";
+    let description = [{
+        High-level operation to extract the raw pointer of a MemRef from the given PTensor.
+        Assumes that the given PTensor was created by MkPTensorOp.
+    }];
+
+    let arguments = (ins AnyType:$source);
+    let results = (outs Index:$raw_pointer);
+
+    let builders = [
+        OpBuilder<(ins "::mlir::Value":$tnsr), [{
+            build($_builder, $_state, $_builder.getIndexType(), tnsr);
+        }]>,
+    ];
+}
+
 def DimOp : PTensor_Op<"dim", [
     DeclareOpInterfaceMethods<OpAsmOpInterface, ["getAsmResultNames"]>,
     ConditionallySpeculatable, NoMemoryEffect,

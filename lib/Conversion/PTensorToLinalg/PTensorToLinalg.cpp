@@ -159,6 +159,29 @@ struct ExtractTensorLowering
   }
 };
 
+/// Lower to the input operand of the defining op to a raw pointer.
+struct ExtractRawPtrLowering
+    : public ::mlir::OpConversionPattern<::imex::ptensor::ExtractRawPtrOp> {
+  using OpConversionPattern::OpConversionPattern;
+
+  ::mlir::LogicalResult
+  matchAndRewrite(::imex::ptensor::ExtractRawPtrOp op,
+                  ::imex::ptensor::ExtractRawPtrOp::Adaptor adaptor,
+                  ::mlir::ConversionPatternRewriter &rewriter) const override {
+
+    auto src = adaptor.getSource();
+    auto srcType = src.getType().dyn_cast<::mlir::MemRefType>();
+    if (!srcType) {
+      return mlir::failure();
+    }
+
+    rewriter.replaceOp(op,
+                       createExtractPtrFromMemRef(rewriter, op.getLoc(), src));
+
+    return ::mlir::success();
+  }
+};
+
 /// Convert PTensor's subview to memref::subview.
 /// Adjusted from NTensor
 struct SubviewLowering
@@ -858,9 +881,11 @@ struct ConvertPTensorToLinalgPass
         [&](mlir::func::CallOp op) { return typeConverter.isLegal(op); });
 
     ::mlir::RewritePatternSet patterns(&ctxt);
-    patterns.insert<MkPTensorLowering, ExtractTensorLowering, SubviewLowering,
-                    InsertSliceLowering, ARangeLowering, CreateLowering,
-                    EWBinOpLowering, ReductionOpLowering>(typeConverter, &ctxt);
+    patterns
+        .insert<MkPTensorLowering, ExtractTensorLowering, ExtractRawPtrLowering,
+                SubviewLowering, InsertSliceLowering, ARangeLowering,
+                CreateLowering, EWBinOpLowering, ReductionOpLowering>(
+            typeConverter, &ctxt);
     ::mlir::populateFunctionOpInterfaceTypeConversionPattern<
         ::mlir::func::FuncOp>(patterns, typeConverter);
     ::mlir::populateReturnOpTypeConversionPattern(patterns, typeConverter);

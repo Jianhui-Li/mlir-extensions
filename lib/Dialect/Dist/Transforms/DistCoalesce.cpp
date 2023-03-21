@@ -396,6 +396,10 @@ struct DistCoalescePass : public ::imex::DistCoalesceBase<DistCoalescePass> {
       }
       return ::mlir::WalkResult::advance();
     });
+    if (!firstOp) {
+      std::cerr << "no dist-ops found in dist-coalesce\n";
+      return;
+    }
     builder.setInsertionPoint(firstOp);
 
     // insert temporary casts for block args so that we have a base operation

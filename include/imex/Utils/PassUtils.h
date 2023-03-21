@@ -164,7 +164,7 @@ dispatchIndexValues(const ::mlir::ValueRange &sizes,
   }
 }
 
-/// create an empty RankedTensor with tiven shape and elType
+/// create an empty RankedTensor with given shape and elType
 inline auto createEmptyTensor(::mlir::OpBuilder &builder, ::mlir::Location loc,
                               ::mlir::Type elType,
                               const ::mlir::ValueRange &shp) {
