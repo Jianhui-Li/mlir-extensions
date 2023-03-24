@@ -337,7 +337,7 @@ struct InsertSliceLowering
         createIndex(loc, rewriter, 0));
 
     rewriter.replaceOpWithNewOp<::mlir::scf::IfOp>(
-        op, ::mlir::TypeRange{}, gt0,
+        op, gt0,
         [&](::mlir::OpBuilder &builder, ::mlir::Location loc) {
           builder.create<::mlir::scf::YieldOp>(
               loc, ::mlir::linalg::makeMemRefCopyOp(builder, loc, src, view)
@@ -459,7 +459,8 @@ struct CreateLowering
 
     // init tensor
     auto elTyp = ::imex::ptensor::toMLIR(rewriter, op.getDType());
-    auto res = createEmptyTensor(rewriter, loc, elTyp, adaptor.getShape());
+    ::mlir::Value res =
+        createEmptyTensor(rewriter, loc, elTyp, adaptor.getShape());
 
     if (value) {
       res = createParFor(

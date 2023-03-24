@@ -20,6 +20,7 @@ if(NOT LEVEL_ZERO_DIR)
     message(FATAL_ERROR "LEVEL_ZERO_DIR is not set")
 endif()
 
+set(CMAKE_INSTALL_RPATH "${LEVEL_ZERO_DIR}/lib;${SYCL_DIR}/lib")
 add_mlir_library(sycl-runtime
     SHARED
     SyclRuntimeWrappers.cpp
@@ -27,7 +28,11 @@ add_mlir_library(sycl-runtime
     EXCLUDE_FROM_LIBMLIR
   )
 
-target_compile_options (sycl-runtime PUBLIC -fexceptions)
+check_cxx_compiler_flag("-frtti" CXX_HAS_FRTTI_FLAG)
+if(NOT CXX_HAS_FRTTI_FLAG)
+    message(FATAL_ERROR "CXX compiler does not accept flag -frtti")
+endif()
+target_compile_options (sycl-runtime PUBLIC -fexceptions -frtti)
 
 target_include_directories(sycl-runtime PRIVATE
     ${MLIR_INCLUDE_DIRS}

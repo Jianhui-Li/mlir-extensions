@@ -1,10 +1,3 @@
-configure_lit_site_cfg(
-        ${CMAKE_CURRENT_SOURCE_DIR}/lit.site.cfg.py.in
-        ${CMAKE_CURRENT_BINARY_DIR}/lit.site.cfg.py
-        MAIN_CONFIG
-        ${CMAKE_CURRENT_SOURCE_DIR}/lit.cfg.py
-)
-
 if(WIN32)
     set(MLIR_RUNNER_UTILS_DIR ${LLVM_BINARY_DIR}/bin)
 else()
@@ -13,9 +6,10 @@ endif()
 set(IMEX_TEST_DEPENDS
         FileCheck count not
         imex-opt
-        mlir-cpu-runner
+        imex-cpu-runner
         mlir_c_runner_utils
         mlir_runner_utils
+        imex_runner_utils
         )
 
 if(IMEX_ENABLE_VULKAN_RUNNER)
@@ -37,16 +31,26 @@ if(IMEX_ENABLE_L0_RUNTIME)
         )
 endif()
 
+if(IMEX_ENABLE_L0_RUNTIME OR IMEX_ENABLE_SYCL_RUNTIME)
+    list(APPEND IMEX_TEST_DEPENDS
+        l0-fp64-checker
+        )
+endif()
+
+# "Gen" is the root of all generated test cases
+add_subdirectory(Gen)
+
+set(IMEX_LIT_CFG_PY ${CMAKE_CURRENT_SOURCE_DIR}/lit.cfg.py)
 configure_lit_site_cfg(
   ${CMAKE_CURRENT_SOURCE_DIR}/lit.site.cfg.py.in
   ${CMAKE_CURRENT_BINARY_DIR}/lit.site.cfg.py
   MAIN_CONFIG
-  ${CMAKE_CURRENT_SOURCE_DIR}/lit.cfg.py
+  ${IMEX_LIT_CFG_PY}
   )
 
 add_lit_testsuite(check-imex "Running the IMEX regression tests"
         ${CMAKE_CURRENT_BINARY_DIR}
-        DEPENDS ${IMEX_TEST_DEPENDS}
+        DEPENDS ${IMEX_TEST_DEPENDS} check-gen
         )
 set_target_properties(check-imex PROPERTIES FOLDER "Tests")
 

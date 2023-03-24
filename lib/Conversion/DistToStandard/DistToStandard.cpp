@@ -748,7 +748,7 @@ struct LocalTargetOfSliceOpConverter
 
     auto idxTyp = rewriter.getIndexType();
     auto offSz = rewriter.create<::mlir::scf::IfOp>(
-        loc, ::mlir::TypeRange{idxTyp, idxTyp}, overlaps.get(),
+        loc, overlaps.get(),
         [&](::mlir::OpBuilder &builder, ::mlir::Location loc) {
           // start index within our local part if slice starts before lpart
           auto start = (lOff - slcOff + slcStride - oneIdx) / slcStride;
