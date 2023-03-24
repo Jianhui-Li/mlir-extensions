@@ -20,7 +20,6 @@ include "mlir/IR/AttrTypeBase.td"
 include "mlir/Interfaces/SideEffectInterfaces.td"
 include "mlir/Interfaces/ViewLikeInterface.td"
 include "mlir/IR/BuiltinTypeInterfaces.td"
-include "mlir/IR/SubElementInterfaces.td"
 include "mlir/Interfaces/InferTypeOpInterface.td"
 include "mlir/Interfaces/ViewLikeInterface.td"
 include "mlir/Interfaces/ShapedOpInterfaces.td"
@@ -64,8 +63,7 @@ class PTensor_Type<string name, string typeMnemonic, list<Trait> traits = [],
   let mnemonic = typeMnemonic;
 }
 
-def PTensor_PTensor : PTensor_Type<"PTensor", "ptensor", [
-  DeclareTypeInterfaceMethods<SubElementTypeInterface>, ShapedTypeInterface],
+def PTensor_PTensor : PTensor_Type<"PTensor", "ptensor", [ShapedTypeInterface],
   "::imex::ptensor::PTensorBase"> {
   let summary = "Multi-dimensional numpy-like array";
   let description = [{

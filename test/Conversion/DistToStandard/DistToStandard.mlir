@@ -112,8 +112,6 @@ module {
 // CHECK: memref.extract_aligned_pointer_as_index
 // CHECK: memref.extract_aligned_pointer_as_index
 // CHECK: memref.extract_aligned_pointer_as_index
-// CHECK: memref.extract_aligned_pointer_as_index
-// CHECK: memref.extract_aligned_pointer_as_index
 // CHECK: call @_idtr_repartition
 // CHECK: memref.store
 // CHECK: memref.store

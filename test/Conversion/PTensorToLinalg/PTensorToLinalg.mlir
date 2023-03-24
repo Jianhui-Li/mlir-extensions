@@ -40,7 +40,7 @@ func.func @test_create(%arg0: index, %arg1: index, %arg2: i64) -> !ptensor.ptens
 
 // -----
 func.func @test_ewbin(%arg0: !ptensor.ptensor<?xi64>) -> !ptensor.ptensor<?xi64> {
-    %0 = "ptensor.ewbin"(%arg0, %arg0) {op = 23 : i32} : (!ptensor.ptensor<?xi64>, !ptensor.ptensor<?xi64>) -> !ptensor.ptensor<?xi64>
+    %0 = "ptensor.ewbin"(%arg0, %arg0) {op = 21 : i32} : (!ptensor.ptensor<?xi64>, !ptensor.ptensor<?xi64>) -> !ptensor.ptensor<?xi64>
     return %0 : !ptensor.ptensor<?xi64>
 }
 // CHECK-LABEL: #map = affine_map<(d0) -> (d0)>
