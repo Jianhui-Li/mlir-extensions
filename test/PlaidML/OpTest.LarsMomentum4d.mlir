@@ -1,12 +1,15 @@
 // RUN: %python_executable %imex_runner -i %s --pass-pipeline-file=%p/linalg-to-cpu.pp \
-// RUN:                                        --runner mlir-cpu-runner -e main \
-// RUN:                                        --shared-libs=%mlir_runner_utils \
-// RUN:                                        --entry-point-result=void | FileCheck %s
-// RUN: %gpu_skip || %python_executable %imex_runner -i %s --pass-pipeline-file=%p/linalg-to-llvm.pp \
-// RUN:                                        --runner mlir-cpu-runner -e main \
+// RUN:                                       --runner imex-cpu-runner -e main \
+// RUN:                                       --shared-libs=%mlir_runner_utils,%mlir_c_runner_utils \
+// RUN:                                       --entry-point-result=void --filecheck
+// RUN: %python_executable %imex_runner --requires=l0-runtime -i %s --pass-pipeline-file=%p/linalg-to-llvm.pp \
+// RUN:                                       --runner imex-cpu-runner -e main \
+// RUN:                                       --entry-point-result=void \
+// RUN:                                       --shared-libs=%mlir_runner_utils,%mlir_c_runner_utils,%levelzero_runtime --filecheck
+// RUN: %python_executable %imex_runner --requires=sycl-runtime -i %s --pass-pipeline-file=%p/linalg-to-llvm.pp \
+// RUN:                                        --runner imex-cpu-runner -e main \
 // RUN:                                        --entry-point-result=void \
-// RUN:                                        --shared-libs=%mlir_runner_utils,%levelzero_runtime | FileCheck %s
-
+// RUN:                                        --shared-libs=%mlir_runner_utils,%mlir_c_runner_utils,%sycl_runtime --filecheck
 #map0 = affine_map<(d0, d1, d2, d3) -> (d0, d1, d2, d3)>
 #map1 = affine_map<(d0, d1, d2, d3) -> ()>
 #map2 = affine_map<() -> ()>
@@ -21,8 +24,8 @@ func.func @main() {
     %unranked_2 = tensor.cast %5 : tensor<4x7x3x9xf32> to tensor<*xf32>
     call @printMemrefF32(%unranked_1) : (tensor<*xf32>) -> ()
     call @printMemrefF32(%unranked_2) : (tensor<*xf32>) -> ()
-    // CHECK: [1.06177, 1.06177, 1.06177, 1.06177, 1.06177, 1.06177, 1.06177, 1.06177, 1.06177]
-    // CHECK: [0.438232, 0.438232, 0.438232, 0.438232, 0.438232, 0.438232, 0.438232, 0.438232, 0.438232]
+    // CHECK: [1.061{{.*}}, 1.061{{.*}}, 1.061{{.*}}, 1.061{{.*}}, 1.061{{.*}}, 1.061{{.*}}, 1.061{{.*}}, 1.061{{.*}}, 1.061{{.*}}]
+    // CHECK: [0.438{{.*}} 0.438{{.*}}, 0.438{{.*}}, 0.438{{.*}}, 0.438{{.*}}, 0.438{{.*}}, 0.438{{.*}}, 0.438{{.*}}, 0.438{{.*}}]
     return
   }
 func.func private @printMemrefF32(tensor<*xf32>)

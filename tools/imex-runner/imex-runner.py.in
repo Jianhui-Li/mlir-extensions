@@ -15,7 +15,7 @@
 Run a mlir file through imex-opt using a user provided pass pipeline
 and optionally(On by default and turned off by option --no-mlir-runner)
 run resulting output through an mlir runner
-(Default is mlir-cpu-runner and can be overridden by option --runner).
+(Default is imex-cpu-runner and can be overridden by option --runner).
 After that, optionally(Option --filecheck), output can be passed to FileCheck utility.
 The pass pipeline for imex-opt is provided either in a file or as a string; expected
 syntax is similar to mlir-opt's syntax.
@@ -54,9 +54,9 @@ imex_enable_vulkan_runner = @IMEX_ENABLE_VULKAN_RUNNER@
 imex_enable_l0_runtime = @IMEX_ENABLE_L0_RUNTIME@
 imex_enable_sycl_runtime = @IMEX_ENABLE_SYCL_RUNTIME@
 
-runner_choices = ['mlir-cpu-runner']
+runner_choices = ['imex-cpu-runner']
 enabled_features = []
-all_features = ['vulkan-runner', 'l0-runtime', 'sycl-runtime']
+all_features = ['vulkan-runner', 'l0-runtime', 'sycl-runtime', 'igpu-fp64']
 if imex_enable_vulkan_runner:
     runner_choices.append('mlir-vulkan-runner')
     enabled_features.append('vulkan-runner')
@@ -70,7 +70,7 @@ class SplitArgs(argparse.Action):
         setattr(namespace, self.dest, values.split(','))
 
 parser = argparse.ArgumentParser(
-    description="Run imex-opt, optionally pipe result into selected mlir runner (default: mlir-cpu-runner) and then optionally pipe output into FileCheck"
+    description="Run imex-opt, optionally pipe result into selected mlir runner (default: imex-cpu-runner) and then optionally pipe output into FileCheck"
 )
 parser.add_argument("--input-file", "-i", default=None, help="input MLIR file")
 parser.add_argument("--output-file", "-o", default=None, help="output MLIR file")
@@ -81,8 +81,10 @@ parser.add_argument("--imex-print-after-all", "-a", action='store_true', dest='a
 parser.add_argument("--no-mlir-runner", "-n", action='store_true', dest='no_mlir_runner', help="skip mlir runner")
 parser.add_argument("--filecheck", action='store_true', dest='run_filecheck', help="run FileCheck")
 parser.add_argument("--check-prefix", default=None, help="change check prefix (default: CHECK) used by FileCheck")
-parser.add_argument("--runner", "-r", default="mlir-cpu-runner", choices=runner_choices, help="mlir runner name")
+parser.add_argument("--runner", "-r", default="imex-cpu-runner", choices=runner_choices, help="mlir runner name")
 parser.add_argument('--requires', default=enabled_features, action=SplitArgs, help="skip if any of the required in the comma separated list is missing.")
+parser.add_argument("--igpu-fp64", action='store_true', dest='igpu_has_fp64', help="notify runner that igpu has fp64 support")
+parser.add_argument("--no-igpu-fp64", action='store_false', dest='igpu_has_fp64', help="notify runner that igpu does not have fp64 support")
 
 args, unknown = parser.parse_known_args()
 
@@ -93,6 +95,9 @@ if not set(required_features) <= set(all_features):
     print('your options were: ', *required_features)
     print('valid options are: ', *all_features)
     exit(1)
+
+if args.igpu_has_fp64:
+    enabled_features.append('igpu-fp64')
 
 # Skip runner if requirements are not met be enabled features
 if not set(required_features) <= set(enabled_features):
@@ -172,7 +177,10 @@ cmds.append(cmd)
 # build runner command
 if not args.no_mlir_runner:
     # build runner command: all unknown args will be passed to the runner
-    cmd = [os.path.normpath(os.path.join(llvm_binary_dir, 'bin', args.runner))] + unknown
+    if args.runner.startswith('imex'):
+        cmd = [os.path.normpath(os.path.join(imex_binary_dir, 'bin', args.runner))] + unknown
+    elif args.runner.startswith('mlir'):
+        cmd = [os.path.normpath(os.path.join(llvm_binary_dir, 'bin', args.runner))] + unknown
     cmds.append(cmd)
 
 # build FileCheck command
