@@ -167,7 +167,7 @@ def MkPTensorOp : PTensor_Op<"init_ptensor", [Pure]> {
     ];
 }
 
-def ExtractMemRefOp : PTensor_Op<"extract_tensor", [Pure]> {
+def ExtractMemRefOp : PTensor_Op<"extract_memref", [Pure]> {
     let summary = "Extract MemRef from a PTensor";
     let description = [{
         High-level operation to extract the MemRef from the given PTensor.
@@ -200,6 +200,26 @@ def ExtractRawPtrOp : PTensor_Op<"extract_raw_ptr", [Pure]> {
     let builders = [
         OpBuilder<(ins "::mlir::Value":$tnsr), [{
             build($_builder, $_state, $_builder.getIndexType(), tnsr);
+        }]>,
+    ];
+}
+
+def ExtractTensorOp : PTensor_Op<"extract_tensor", [Pure]> {
+    let summary = "Extract Tensor from a PTensor";
+    let description = [{
+        High-level operation to extract the Tensor from the given PTensor.
+        Assumes that the given PTensor was created by MkPTensorOp.
+    }];
+
+    let arguments = (ins AnyType:$input);
+    let results = (outs AnyType);
+
+    let builders = [
+        // auto-deduce return type
+        OpBuilder<(ins "::mlir::Value":$tnsr), [{
+            auto mrtyp = tnsr.getType().dyn_cast<::imex::ptensor::PTensorType>().getTensorType();
+            assert(mrtyp);
+            build($_builder, $_state, mrtyp, tnsr);
         }]>,
     ];
 }
@@ -450,7 +470,7 @@ def LoadOp : PTensor_Op<"load",
                      "$_self.cast<PTensorType>().getElementType()">]> {
   let summary = "array element load operation";
   let description = [{
-    The `load` op reads an element from a array specified by an index list. The
+    The `load` op reads an element from an array specified by an index list. The
     output of load is a new value with the same type as the elements of the
     array. The arity of indices is the rank of the array (i.e., if the array
     loaded from is of rank 3, then 3 indices are required for the load following

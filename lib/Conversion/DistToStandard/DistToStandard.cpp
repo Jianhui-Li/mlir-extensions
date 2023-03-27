@@ -746,7 +746,6 @@ struct LocalTargetOfSliceOpConverter
     auto overlaps =
         beforeLocal.select(eFalse, behindLocal.select(eFalse, eTrue));
 
-    auto idxTyp = rewriter.getIndexType();
     auto offSz = rewriter.create<::mlir::scf::IfOp>(
         loc, overlaps.get(),
         [&](::mlir::OpBuilder &builder, ::mlir::Location loc) {

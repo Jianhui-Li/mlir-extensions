@@ -72,7 +72,7 @@ module {
 }
 // CHECK-LABEL: func.func @test_local_target_of_slice(%arg0: !ptensor.ptensor<?xi64>, %arg1: index, %arg2: index, %arg3: memref<1xindex>, %arg4: memref<1xindex>, %arg5: index, %arg6: index) -> (index, index) {
 // CHECK: memref.load
-// CHECK: "ptensor.extract_tensor"(%arg0) : (!ptensor.ptensor<?xi64>) -> memref<?xi64, strided<[?], offset: ?>>
+// CHECK: "ptensor.extract_memref"(%arg0) : (!ptensor.ptensor<?xi64>) -> memref<?xi64, strided<[?], offset: ?>>
 // CHECK: memref.dim
 // CHECK: arith.muli
 // CHECK: arith.select
@@ -106,8 +106,7 @@ module {
     }
 }
 // CHECK-LABEL: @test_repartition(%arg0: !ptensor.ptensor<?x?xi64>, %arg1: index, %arg2: index, %arg3: memref<2xindex>, %arg4: memref<2xindex>) -> (!ptensor.ptensor<?x?xi64>, index, index, memref<2xindex>, memref<2xindex>) {
-// CHECK: memref.extract_aligned_pointer_as_index
-// CHECK: memref.extract_aligned_pointer_as_index
+// CHECK: ptensor.extract_raw_ptr
 // CHECK: memref.extract_aligned_pointer_as_index
 // CHECK: memref.extract_aligned_pointer_as_index
 // CHECK: memref.extract_aligned_pointer_as_index

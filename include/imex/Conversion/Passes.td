@@ -62,6 +62,7 @@ def ConvertPTensorToLinalg : Pass<"convert-ptensor-to-linalg", "::mlir::ModuleOp
                            "::mlir::arith::ArithDialect",
                            "::mlir::tensor::TensorDialect",
                            "::mlir::tosa::TosaDialect",
+                           "::mlir::scf::SCFDialect",
                            "::mlir::memref::MemRefDialect",
                            "::mlir::shape::ShapeDialect",
                            "::mlir::bufferization::BufferizationDialect"];
