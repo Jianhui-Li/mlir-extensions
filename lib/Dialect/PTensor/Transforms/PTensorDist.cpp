@@ -66,8 +66,7 @@ inline ::mlir::Value createAllReduce(::mlir::Location &loc,
                                      ::mlir::Value pTnsr) {
   auto pTnsrTyp = pTnsr.getType().dyn_cast<::imex::ptensor::PTensorType>();
   assert(pTnsrTyp);
-  auto rTnsr = builder.create<::imex::ptensor::ExtractMemRefOp>(
-      loc, pTnsrTyp.getMemRefType(), pTnsr);
+  auto rTnsr = builder.create<::imex::ptensor::ExtractTensorOp>(loc, pTnsr);
   return builder.create<::imex::dist::AllReduceOp>(loc, rTnsr.getType(), op,
                                                    rTnsr);
 }
@@ -90,14 +89,14 @@ struct RecOpRewritePattern : public ::mlir::OpRewritePattern<T> {
   }
 };
 
-/// Rewriting ::imex::ptensor::ExtractMemRefOp
-/// Get PTensor from DistTensor and apply to ExtractMemRefOp.
-struct DistExtractMemRefOpRWP
-    : public RecOpRewritePattern<::imex::ptensor::ExtractMemRefOp> {
+/// Rewriting ::imex::ptensor::ExtractTensorOp
+/// Get PTensor from DistTensor and apply to ExtractTensorOp.
+struct DistExtractTensorOpRWP
+    : public RecOpRewritePattern<::imex::ptensor::ExtractTensorOp> {
   using RecOpRewritePattern::RecOpRewritePattern;
 
   ::mlir::LogicalResult
-  matchAndRewrite(::imex::ptensor::ExtractMemRefOp op,
+  matchAndRewrite(::imex::ptensor::ExtractTensorOp op,
                   ::mlir::PatternRewriter &rewriter) const override {
     auto loc = op.getLoc();
     // get input
@@ -107,8 +106,7 @@ struct DistExtractMemRefOpRWP
       return ::mlir::failure();
     }
     auto pTnsr = createLocalTensorOf(loc, rewriter, op.getInput());
-    rewriter.replaceOpWithNewOp<::imex::ptensor::ExtractMemRefOp>(
-        op, inpPtTyp.getPTensorType().getMemRefType(), pTnsr);
+    rewriter.replaceOpWithNewOp<::imex::ptensor::ExtractTensorOp>(op, pTnsr);
     return ::mlir::success();
   }
 };
@@ -415,7 +413,7 @@ struct PTensorDistPass : public ::imex::PTensorDistBase<PTensorDistPass> {
 
     ::mlir::FrozenRewritePatternSet patterns;
     insertPatterns<DistARangeOpRWP, DistCreateOpRWP, DistEWBinOpRWP,
-                   DistReductionOpRWP, DistExtractMemRefOpRWP, DistSubviewOpRWP,
+                   DistReductionOpRWP, DistExtractTensorOpRWP, DistSubviewOpRWP,
                    DistInsertSliceOpRWP>(getContext(), patterns);
     (void)::mlir::applyPatternsAndFoldGreedily(this->getOperation(), patterns);
   }

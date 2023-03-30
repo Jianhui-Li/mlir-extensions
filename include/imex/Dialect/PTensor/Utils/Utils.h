@@ -101,13 +101,12 @@ inline auto createGetLocalSizes(::mlir::Location loc,
                                 ::mlir::Value lPTnsr) {
   auto PTTyp = lPTnsr.getType().dyn_cast<::imex::ptensor::PTensorType>();
   assert(PTTyp);
-  auto lMemRef = builder.create<::imex::ptensor::ExtractMemRefOp>(
-      loc, PTTyp.getMemRefType(), lPTnsr);
+  auto lTensor = builder.create<::imex::ptensor::ExtractTensorOp>(loc, lPTnsr);
   auto rank = PTTyp.getRank();
   ::mlir::SmallVector<::mlir::Value> dims(rank);
 
   for (int64_t i = 0; i < rank; ++i) {
-    dims[i] = ::mlir::linalg::createOrFoldDimOp(builder, loc, lMemRef, i);
+    dims[i] = ::mlir::linalg::createOrFoldDimOp(builder, loc, lTensor, i);
   }
 
   return dims;

@@ -167,26 +167,6 @@ def MkPTensorOp : PTensor_Op<"init_ptensor", [Pure]> {
     ];
 }
 
-def ExtractMemRefOp : PTensor_Op<"extract_memref", [Pure]> {
-    let summary = "Extract MemRef from a PTensor";
-    let description = [{
-        High-level operation to extract the MemRef from the given PTensor.
-        Assumes that the given PTensor was created by MkPTensorOp.
-    }];
-
-    let arguments = (ins AnyType:$input);
-    let results = (outs AnyMemRef);
-
-    let builders = [
-        // auto-deduce return type
-        OpBuilder<(ins "::mlir::Value":$tnsr), [{
-            auto mrtyp = tnsr.getType().dyn_cast<::imex::ptensor::PTensorType>().getMemRefType();
-            assert(mrtyp);
-            build($_builder, $_state, mrtyp, tnsr);
-        }]>,
-    ];
-}
-
 def ExtractRawPtrOp : PTensor_Op<"extract_raw_ptr", [Pure]> {
     let summary = "Extract the raw memref pointer from a given PTensor";
     let description = [{

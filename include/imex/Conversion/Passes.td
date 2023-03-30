@@ -85,6 +85,7 @@ def ConvertDistToStandard: Pass<"convert-dist-to-standard", "::mlir::ModuleOp"> 
   let dependentDialects = ["::imex::ptensor::PTensorDialect",
                            "::mlir::linalg::LinalgDialect",
                            "::mlir::func::FuncDialect",
+                           "::mlir::tensor::TensorDialect",
                            "::mlir::memref::MemRefDialect",
                            "::mlir::arith::ArithDialect",
                            "::mlir::scf::SCFDialect",

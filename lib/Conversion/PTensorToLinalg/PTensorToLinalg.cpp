@@ -15,7 +15,7 @@
 /// Lowering a MkPtensorOp results in a unrealized_conversion_cast. After
 /// complete conversion the resulting value should have no use. However, during
 /// conversion its operands will serve for extracting the members (such as
-/// ExtractMemRefOp): we chase the unrealized_conversion_cast as the rooting op
+/// ExtractTensorOp): we chase the unrealized_conversion_cast as the rooting op
 /// and return the corresponding operand.
 ///
 /// Currently we do not support propagating device data across function

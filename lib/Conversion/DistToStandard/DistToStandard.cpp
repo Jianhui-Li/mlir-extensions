@@ -711,9 +711,9 @@ struct LocalTargetOfSliceOpConverter
     // Get the local part of the global slice, team, rank, offsets
     auto lOffs = createLocalOffsetsOf(loc, rewriter, src);
     auto lTnsr = createLocalTensorOf(loc, rewriter, src);
-    auto lMemRef = rewriter.create<::imex::ptensor::ExtractMemRefOp>(
-        loc, dtType.getPTensorType().getMemRefType(), lTnsr);
-    auto lExtnt = ::mlir::linalg::createOrFoldDimOp(rewriter, loc, lMemRef, 0);
+    auto lTensor =
+        rewriter.create<::imex::ptensor::ExtractTensorOp>(loc, lTnsr);
+    auto lExtnt = ::mlir::linalg::createOrFoldDimOp(rewriter, loc, lTensor, 0);
 
     // Get the vals from dim 0
     auto lOff = easyIdx(loc, rewriter, lOffs[0]);
@@ -779,7 +779,7 @@ struct LocalTargetOfSliceOpConverter
           if (auto sval = ::mlir::getConstantIntValue(slcStrides[i]);
               sval && sval == 1) {
             results[1 * rank + i] =
-                ::mlir::linalg::createOrFoldDimOp(rewriter, loc, lMemRef, i);
+                ::mlir::linalg::createOrFoldDimOp(rewriter, loc, lTensor, i);
             continue;
           }
         }
@@ -938,8 +938,10 @@ struct RePartitionOpConverter
 
     // Now it's time to get memrefs their pointers for the function call
     auto bMRTyp = dTTyp.getPTensorType().getMemRefType();
-    auto bMRef =
-        rewriter.create<::imex::ptensor::ExtractMemRefOp>(loc, bMRTyp, lTnsr);
+    auto bTensor =
+        rewriter.create<::imex::ptensor::ExtractTensorOp>(loc, lTnsr);
+    auto bMRef = rewriter.create<::mlir::bufferization::ToMemrefOp>(loc, bMRTyp,
+                                                                    bTensor);
     auto bMeta =
         rewriter.create<::mlir::memref::ExtractStridedMetadataOp>(loc, bMRef);
     auto lDataPtr =
@@ -1070,8 +1072,9 @@ struct ConvertDistToStandardPass
     target.addIllegalDialect<::imex::dist::DistDialect>();
     target.addLegalDialect<
         ::mlir::linalg::LinalgDialect, ::mlir::arith::ArithDialect,
-        ::imex::ptensor::PTensorDialect, ::mlir::memref::MemRefDialect,
-        ::mlir::scf::SCFDialect>();
+        ::imex::ptensor::PTensorDialect, ::mlir::tensor::TensorDialect,
+        ::mlir::memref::MemRefDialect, ::mlir::scf::SCFDialect,
+        ::mlir::bufferization::BufferizationDialect>();
     target.addLegalOp<::mlir::UnrealizedConversionCastOp>(); // FIXME
 
     // make sure function boundaries get converted
