@@ -3,7 +3,6 @@
 func.func private @printMemrefF64(%ptr : tensor<*xf64>)
 func.func private @printMemrefI64(%ptr : tensor<*xi64>)
 
-#map = affine_map<(d0) -> (d0)>
 func.func @main() {
     %i5 = arith.constant 5 : index
     %ca = arith.constant 13.1 : f64

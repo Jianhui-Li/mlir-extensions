@@ -1,11 +1,16 @@
 builtin.module(
     convert-ptensor-to-linalg
+    func.func(
+        tosa-to-linalg
+        tosa-to-tensor
+    )
+    canonicalize
+    linalg-fuse-elementwise-ops
     convert-shape-to-std
     arith-expand
     arith-bufferize
     func-bufferize
     func.func(
-        tosa-to-linalg
         empty-tensor-to-alloc-tensor
         scf-bufferize
         tensor-bufferize

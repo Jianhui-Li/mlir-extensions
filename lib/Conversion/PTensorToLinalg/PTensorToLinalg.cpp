@@ -651,11 +651,10 @@ struct EWBinOpLowering
       return ::mlir::failure();
     }
 
-    auto resultTy = op->getResult(0).getType().dyn_cast<::mlir::ShapedType>();
-    if (!resultTy) {
-      return rewriter.notifyMatchFailure(op,
-                                         "All results must be a shaped type");
-    }
+    auto resType = op->getResult(0)
+                       .getType()
+                       .cast<::imex::ptensor::PTensorType>()
+                       .getTensorType();
 
     // get the input as tensors
     auto lhs = adaptor.getLhs();
@@ -676,13 +675,13 @@ struct EWBinOpLowering
             .getInt();
 
     ::mlir::Value newOp =
-        createTosaOp(loc, binOpId, rewriter, lhsTnsr, lhs, rhs);
+        createTosaOp(loc, binOpId, rewriter, resType, lhs, rhs);
     if (!newOp) {
       // generate linalg.generic loop
 
       // determine output tensor dimensions
       llvm::SmallVector<::mlir::Value> dynDims;
-      dynDims.resize(resultTy.getRank());
+      dynDims.resize(resType.getRank());
       for (auto arg : {lhs, rhs}) {
         auto operandTy = arg.getType().cast<::mlir::ShapedType>();
         for (int i = 0; i < operandTy.getRank(); i++) {
@@ -717,8 +716,11 @@ struct EWBinOpLowering
       for (unsigned i = 0; i < rank; ++i) {
         resExprs.emplace_back(rewriter.getAffineDimExpr(i));
       }
-      auto maps =
-          ::mlir::AffineMap::inferFromExprList({lhsExprs, rhsExprs, resExprs});
+      auto lhsMap = ::mlir::AffineMap::get(resType.getRank(), /*symbolCount=*/0,
+                                           lhsExprs, rewriter.getContext());
+      auto rhsMap = ::mlir::AffineMap::get(resType.getRank(), /*symbolCount=*/0,
+                                           rhsExprs, rewriter.getContext());
+      auto resMap = rewriter.getMultiDimIdentityMap(resType.getRank());
 
       // we just make all dims parallel
       llvm::SmallVector<mlir::utils::IteratorType> iterators(
@@ -727,11 +729,13 @@ struct EWBinOpLowering
       // get the body builder for our binop and create genericop
       // FIXME: make createParFor ready for this
       auto bodyBuilder = getBodyBuilder(binOpId, elTyp);
-      newOp = rewriter
-                  .create<::mlir::linalg::GenericOp>(
-                      loc, tensor.getType(), ::mlir::ValueRange{lhs, rhs},
-                      tensor, maps, iterators, bodyBuilder)
-                  .getResult(0);
+      newOp =
+          rewriter
+              .create<::mlir::linalg::GenericOp>(
+                  loc, tensor.getType(), ::mlir::ValueRange{lhs, rhs}, tensor,
+                  ::mlir::ArrayRef<::mlir::AffineMap>{lhsMap, rhsMap, resMap},
+                  iterators, bodyBuilder)
+              .getResult(0);
     }
     rewriter.replaceOp(op, newOp);
 
