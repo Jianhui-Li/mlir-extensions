@@ -208,6 +208,9 @@ jobs:
           
           echo "============Building the app===================="
           cov-build --dir cov_dir python3 build_tools/build_imex.py --working-dir $HOME_DIR/tmpdir --llvm-install $HOME_DIR/llvm-mlir/_mlir_install --external-lit ${external_lit}
+          # Exclude unwanted files/folders
+          cov-manage-emit --dir cov_dir --tu-pattern "file('/__w/frameworks.ai.mlir.mlir-extensions/frameworks.ai.mlir.mlir-extensions/llvm-mlir/_mlir_install/*')" delete
+          cov-manage-emit --dir cov_dir --tu-pattern "file('/__w/frameworks.ai.mlir.mlir-extensions/frameworks.ai.mlir.mlir-extensions/frameworks.ai.mlir.mlir-extensions/_build/*')" delete
           #echo "============Build done===================="    
           
             #python build_tools/build_imex.py                                     \
@@ -231,4 +234,4 @@ jobs:
         env: 
           no_proxy: coverityent.devtools.intel.com, intel.com
         run: |
-          cov-commit-defects --dir frameworks.ai.mlir.mlir-extensions/cov_dir --url https://coverityent.devtools.intel.com/prod5 --user sfield --password ${{ secrets.EMAILAPPPASSWORD }} --stream "MLIR_Prod_main"
+          cov-commit-defects --dir frameworks.ai.mlir.mlir-extensions/cov_dir --url https://coverityent.devtools.intel.com/prod5 --user fanxinyu --password ${{ secrets.LUNAEMAILPWD }} --stream "MLIR_Prod_main"
