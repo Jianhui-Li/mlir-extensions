@@ -52,8 +52,8 @@ module @jit__get_met_weights_singlegal.43 {
     return %11 : tensor<22xf32>
   }
   func.func private @triweighted_histogram.170(%arg0: tensor<f32>, %arg1: tensor<f32>, %arg2: tensor<23xf32>) -> tensor<22xf32> {
-    %0 = tensor.subview %arg2[0] [22] [1] : tensor<23xf32> to tensor<22xf32>
-    %1 = tensor.subview %arg2[1] [22] [1] : tensor<23xf32> to tensor<22xf32>
+    %0 = tensor.extract_slice %arg2[0] [22] [1] : tensor<23xf32> to tensor<22xf32>
+    %1 = tensor.extract_slice %arg2[1] [22] [1] : tensor<23xf32> to tensor<22xf32>
     %2 = func.call @_triweighted_histogram_kernel.164(%arg0, %arg1, %0, %1) : (tensor<f32>, tensor<f32>, tensor<22xf32>, tensor<22xf32>) -> tensor<22xf32>
     return %2 : tensor<22xf32>
   }
@@ -569,7 +569,7 @@ module @jit__get_met_weights_singlegal.43 {
       %21 = arith.andi %arg3, %arg4 : i1
       linalg.yield %21 : i1
     } -> tensor<i1>
-    %5 = tensor.subview %arg1[22] [1] [1] : tensor<23xf32> to tensor<1xf32>
+    %5 = tensor.extract_slice %arg1[22] [1] [1] : tensor<23xf32> to tensor<1xf32>
     %6 = tensor.collapse_shape %5 [] : tensor<1xf32> into tensor<f32>
     %7 = tensor.empty() : tensor<i1>
     %8 = linalg.generic {indexing_maps = [#map2, #map2, #map2], iterator_types = []} ins(%arg0, %6 : tensor<f32>, tensor<f32>) outs(%7 : tensor<i1>) {
@@ -593,7 +593,7 @@ module @jit__get_met_weights_singlegal.43 {
       %24 = arith.select %23, %arg5, %arg6 : f32
       linalg.yield %24 : f32
     } -> tensor<22xf32>
-    %12 = tensor.subview %arg1[0] [1] [1] : tensor<23xf32> to tensor<1xf32>
+    %12 = tensor.extract_slice %arg1[0] [1] [1] : tensor<23xf32> to tensor<1xf32>
     %13 = tensor.collapse_shape %12 [] : tensor<1xf32> into tensor<f32>
     %14 = tensor.empty() : tensor<i1>
     %15 = linalg.generic {indexing_maps = [#map2, #map2, #map2], iterator_types = []} ins(%arg0, %13 : tensor<f32>, tensor<f32>) outs(%14 : tensor<i1>) {

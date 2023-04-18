@@ -4,10 +4,12 @@ on:
   push:
     branches:
       - main
+      - dist-ndarray
       - refactor
   pull_request:
     branches:
       - main
+      - dist-ndarray
       - refactor
 
 jobs:
