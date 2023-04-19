@@ -141,25 +141,25 @@ def MkPTensorOp : PTensor_Op<"init_ptensor", [Pure]> {
         FIXME The resulting PTensor will be marked as living on a device if $device is not none.
     }];
 
-    let arguments = (ins AnyMemRef:$tensor,
+    let arguments = (ins AnyRankedTensor:$tensor,
                          AnyType:$device);
     let results = (outs PTensor_PTensor:$res);
     let skipDefaultBuilders = 1;
     let builders = [
       OpBuilder<(ins "bool":$onDevice,
-                     "::mlir::Value":$mem_ref,
+                     "::mlir::Value":$tensor,
                      "::mlir::Value":$device), [{
-        $_state.addOperands({mem_ref, device});
-        auto mr = mem_ref.getType().dyn_cast<::mlir::MemRefType>();
+        $_state.addOperands({tensor, device});
+        auto mr = tensor.getType().dyn_cast<::mlir::RankedTensorType>();
         $_state.addTypes(::imex::ptensor::PTensorType::get(
             mr.getShape(),
             mr.getElementType())); // FIXME device
       }]>,
       // Default: no device
-      OpBuilder<(ins "::mlir::Value":$mem_ref), [{
+      OpBuilder<(ins "::mlir::Value":$tensor), [{
         auto dmy = createInt<1>($_builder.getUnknownLoc(), $_builder, 0);
-        $_state.addOperands({mem_ref, dmy});
-        auto mr = mem_ref.getType().dyn_cast<::mlir::MemRefType>();
+        $_state.addOperands({tensor, dmy});
+        auto mr = tensor.getType().dyn_cast<::mlir::RankedTensorType>();
         $_state.addTypes(::imex::ptensor::PTensorType::get(
             mr.getShape().size(),
             mr.getElementType()));

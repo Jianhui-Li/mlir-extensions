@@ -37,6 +37,7 @@ def PTensorDist : Pass<"ptensor-dist", "::mlir::func::FuncOp"> {
   let dependentDialects = ["::imex::ptensor::PTensorDialect",
                            "::imex::dist::DistDialect",
                            "::mlir::arith::ArithDialect",
+                           "::mlir::bufferization::BufferizationDialect",
                            "::mlir::linalg::LinalgDialect",
                            "::mlir::tensor::TensorDialect",
                            "::mlir::memref::MemRefDialect"];

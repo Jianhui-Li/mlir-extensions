@@ -355,7 +355,7 @@ def AllReduceOp : Dist_Op<"allreduce", []> {
     }];
     // reduction operation and local tensor
     let arguments = (ins AnyAttr:$op, AnyMemRef:$data);
-    let results = (outs AnyType);
+    let results = (outs AnyMemRef);
 }
 
 // ============================================================================

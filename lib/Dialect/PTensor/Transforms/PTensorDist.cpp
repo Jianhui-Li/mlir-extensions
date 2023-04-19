@@ -36,6 +36,7 @@
 
 #include <mlir/Conversion/LLVMCommon/TypeConverter.h>
 #include <mlir/Dialect/Arith/IR/Arith.h>
+#include <mlir/Dialect/Bufferization/IR/Bufferization.h>
 #include <mlir/Dialect/Func/IR/FuncOps.h>
 #include <mlir/Dialect/LLVMIR/LLVMDialect.h>
 #include <mlir/Dialect/Linalg/IR/Linalg.h>
@@ -66,9 +67,12 @@ inline ::mlir::Value createAllReduce(::mlir::Location &loc,
                                      ::mlir::Value pTnsr) {
   auto pTnsrTyp = pTnsr.getType().dyn_cast<::imex::ptensor::PTensorType>();
   assert(pTnsrTyp);
-  auto rTnsr = builder.create<::imex::ptensor::ExtractTensorOp>(loc, pTnsr);
-  return builder.create<::imex::dist::AllReduceOp>(loc, rTnsr.getType(), op,
-                                                   rTnsr);
+  auto lTnsr = builder.create<::imex::ptensor::ExtractTensorOp>(loc, pTnsr);
+  auto lMRef = builder.create<::mlir::bufferization::ToMemrefOp>(
+      loc, pTnsrTyp.getMemRefType(), lTnsr);
+  auto resTnsr = builder.create<::imex::dist::AllReduceOp>(loc, lMRef.getType(),
+                                                           op, lMRef);
+  return builder.create<::mlir::bufferization::ToTensorOp>(loc, resTnsr);
 }
 
 // *******************************

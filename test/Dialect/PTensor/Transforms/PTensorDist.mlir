@@ -12,7 +12,8 @@ module {
         %1 = ptensor.create %s value %v team %c1 {dtype = 2 : i8} : (index, i64, index) -> !ptensor.ptensor<?xi64>
         %10 = ptensor.subview %0[%c0][%c3][%c3] : !ptensor.ptensor<?xi64> to !ptensor.ptensor<?xi64>
         %20 ="ptensor.ewbin"(%10, %1) {op = 0 : i32} : (!ptensor.ptensor<?xi64>, !ptensor.ptensor<?xi64>) -> !ptensor.ptensor<?xi64>
-        %30 = builtin.unrealized_conversion_cast %20 : !ptensor.ptensor<?xi64> to i64
+        %21 = "ptensor.reduction"(%20) {op = 4 : i32} : (!ptensor.ptensor<?xi64>) -> !ptensor.ptensor<i64>
+        %30 = builtin.unrealized_conversion_cast %21 : !ptensor.ptensor<i64> to i64
         return %30 : i64
     }
 // CHECK-LABEL: func.func @test_arange
@@ -44,4 +45,13 @@ module {
 // CHECK: dist.repartition
 // CHECK: dist.repartition
 // CHECK: "ptensor.ewbin"
+// CHECK: "dist.local_tensor_of"
+// CHECK: "ptensor.reduction"
+// CHECK: "ptensor.extract_tensor"
+// CHECK: bufferization.to_memref
+// CHECK: "dist.allreduce"
+// CHECK: bufferization.to_tensor
+// CHECK: "dist.team_of"
+// CHECK: "ptensor.init_ptensor"
+// CHECK: dist.init_dist_tensor
 }
