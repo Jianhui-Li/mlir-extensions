@@ -92,12 +92,14 @@ struct DistCoalescePass : public ::imex::DistCoalesceBase<DistCoalescePass> {
     if (auto op = val.getDefiningOp<::imex::dist::InitDistTensorOp>()) {
       auto pt = op.getPTensor();
       if (isDefByAnyOf<::imex::ptensor::CreateOp, ::imex::ptensor::ARangeOp,
-                       ::imex::ptensor::EWBinOp, ::imex::ptensor::ReductionOp>(
-              pt)) {
+                       ::imex::ptensor::EWBinOp, ::imex::ptensor::EWUnyOp,
+                       ::imex::ptensor::ReductionOp>(pt)) {
         return op;
       }
       return getBase(pt);
     } else if (auto op = val.getDefiningOp<::imex::ptensor::EWBinOp>()) {
+      return op;
+    } else if (auto op = val.getDefiningOp<::imex::ptensor::EWUnyOp>()) {
       return op;
     } else if (auto op = val.getDefiningOp<::imex::dist::SubviewOp>()) {
       return getBase(op.getSource());
@@ -117,8 +119,10 @@ struct DistCoalescePass : public ::imex::DistCoalesceBase<DistCoalescePass> {
   /// as its single user.
   bool is_temp(::imex::dist::RePartitionOp &op) {
     if (op.getTargetSizes().size() == 0 && op->hasOneUse() &&
-        ::mlir::isa<::imex::ptensor::EWBinOp>(*op->user_begin()) &&
-        op.getBase().template getDefiningOp<::imex::ptensor::EWBinOp>()) {
+        ::mlir::isa<::imex::ptensor::EWBinOp, ::imex::ptensor::EWUnyOp>(
+            *op->user_begin()) &&
+        ::mlir::isa<::imex::ptensor::EWBinOp, ::imex::ptensor::EWUnyOp>(
+            op.getBase().getDefiningOp())) {
       return true;
     }
     return false;
@@ -311,6 +315,8 @@ struct DistCoalescePass : public ::imex::DistCoalesceBase<DistCoalescePass> {
         assert(!nOp || !"not implemented yet");
       }
       val = typedOp.getRhs();
+    } else if (auto typedOp = ::mlir::dyn_cast<::imex::ptensor::EWUnyOp>(op)) {
+      val = typedOp.getSrc();
     }
     ::mlir::Operation *defOp = nullptr;
     if (val) {

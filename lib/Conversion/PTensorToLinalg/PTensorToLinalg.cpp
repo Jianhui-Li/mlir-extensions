@@ -85,8 +85,8 @@ auto createParFor(mlir::Location &loc, mlir::OpBuilder &builder, uint64_t rank,
   // map for output and input
   const ::mlir::AffineMap map =
       ::mlir::AffineMap::getMultiDimIdentityMap(rank, builder.getContext());
-  llvm::SmallVector<::mlir::AffineMap> maps(1 + inputs.size(), map);
-  llvm::SmallVector<::mlir::utils::IteratorType> iterators(
+  ::mlir::SmallVector<::mlir::AffineMap> maps(1 + inputs.size(), map);
+  ::mlir::SmallVector<::mlir::utils::IteratorType> iterators(
       rank, mlir::utils::IteratorType::parallel);
 
   return builder.create<::mlir::linalg::GenericOp>(
@@ -521,7 +521,7 @@ static void yield(mlir::OpBuilder &builder, ::mlir::Location loc,
 /// floats. Currently only integers and floats are supported.
 /// Currently unsigned int ops are not supported.
 template <typename IOP, typename FOP = void>
-static BodyType buildTrivial(::mlir::Type typ) {
+static BodyType buildTrivialBinary(::mlir::Type typ) {
   return [typ](mlir::OpBuilder &builder, ::mlir::Location loc,
                ::mlir::ValueRange args) -> void {
     auto lhsTyp = args[0].getType();
@@ -548,6 +548,35 @@ static BodyType buildTrivial(::mlir::Type typ) {
   };
 }
 
+/// Trivial unary op builders have simple equivalents in Math.
+/// The Math ops are accepted as template arguments, one for ints and one for
+/// floats. Currently only integers and floats are supported.
+/// Currently unsigned int ops are not supported.
+template <typename IOP, typename FOP = void>
+static BodyType buildTrivialUnary(::mlir::Type typ) {
+  return [typ](mlir::OpBuilder &builder, ::mlir::Location loc,
+               ::mlir::ValueRange args) -> void {
+    auto srcTyp = args[0].getType();
+    if (srcTyp.isIntOrIndex()) {
+      if constexpr (!std::is_same_v<IOP, void>) {
+        auto src = doSignCast(builder, loc, args[0]);
+        yield(builder, loc, typ, builder.create<IOP>(loc, src).getResult());
+        return;
+      } else
+        assert(0 &&
+               "Found integer type but binary op not defined for integers");
+    } else if (srcTyp.isIntOrIndexOrFloat()) {
+      if constexpr (!std::is_same_v<FOP, void>) {
+        yield(builder, loc, typ, builder.create<FOP>(loc, args[0]).getResult());
+        return;
+      } else
+        assert(0 && "Found float type but binary op not defined for floats");
+    } else {
+      assert(0 && "Only integers and floats supported for binary ops");
+    }
+  };
+}
+
 /// get a body builder for given binary operation and result type.
 /// Accepts a result type to insert a cast after the operation if needed
 /// FIXME: add missing ops
@@ -555,27 +584,28 @@ static BodyType getBodyBuilder(::imex::ptensor::EWBinOpId binOp,
                                ::mlir::Type typ) {
   switch (binOp) {
   case ptensor::ADD:
-    return buildTrivial<mlir::arith::AddIOp, mlir::arith::AddFOp>(typ);
+    return buildTrivialBinary<mlir::arith::AddIOp, mlir::arith::AddFOp>(typ);
   case ptensor::ATAN2:
-    return buildTrivial<void, mlir::math::Atan2Op>(typ);
+    return buildTrivialBinary<void, mlir::math::Atan2Op>(typ);
   case ptensor::FLOOR_DIVIDE:
-    return buildTrivial<mlir::arith::FloorDivSIOp>(typ);
+    return buildTrivialBinary<mlir::arith::FloorDivSIOp>(typ);
   // case ptensor::LOGADDEXP] =
   // case ptensor::MATMUL] =
   case ptensor::MAXIMUM:
-    return buildTrivial<mlir::arith::MaxSIOp, mlir::arith::MaxFOp>(typ);
+    return buildTrivialBinary<mlir::arith::MaxSIOp, mlir::arith::MaxFOp>(typ);
   case ptensor::MINIMUM:
-    return buildTrivial<mlir::arith::MinSIOp, mlir::arith::MinFOp>(typ);
+    return buildTrivialBinary<mlir::arith::MinSIOp, mlir::arith::MinFOp>(typ);
   case ptensor::MODULO:
-    return buildTrivial<mlir::arith::RemSIOp, mlir::arith::RemFOp>(typ);
+    return buildTrivialBinary<mlir::arith::RemSIOp, mlir::arith::RemFOp>(typ);
   case ptensor::MULTIPLY:
-    return buildTrivial<mlir::arith::MulIOp, mlir::arith::MulFOp>(typ);
+    return buildTrivialBinary<mlir::arith::MulIOp, mlir::arith::MulFOp>(typ);
   case ptensor::POWER:
-    // FIXME math::PowFOp is illegal in convert-math-to-funcs
-    return buildTrivial<mlir::math::IPowIOp, void>(typ);
+    return buildTrivialBinary<mlir::math::IPowIOp, mlir::math::PowFOp>(typ);
   case ptensor::SUBTRACT:
-    return buildTrivial<mlir::arith::SubIOp, mlir::arith::SubFOp>(typ);
-  // case ptensor::TRUE_DIVIDE] =
+    return buildTrivialBinary<mlir::arith::SubIOp, mlir::arith::SubFOp>(typ);
+  case ptensor::TRUE_DIVIDE:
+    return buildTrivialBinary<::mlir::arith::DivSIOp, ::mlir::arith::DivFOp>(
+        typ);
   // case ptensor::BITWISE_LEFT_SHIFT] =
   // case ptensor::BITWISE_RIGHT_SHIFT] =
 
@@ -595,7 +625,6 @@ static BodyType getBodyBuilder(::imex::ptensor::EWBinOpId binOp,
                            ::mlir::ConversionPatternRewriter &rewriter,
                            ::mlir::TensorType returnType, ::mlir::Value lhs,
                            ::mlir::Value rhs) {
-  // emit TOSA op
   switch (binOpId) {
   case ptensor::BITWISE_AND:
     return rewriter
@@ -679,23 +708,8 @@ struct EWBinOpLowering
     if (!newOp) {
       // generate linalg.generic loop
 
-      // determine output tensor dimensions
-      llvm::SmallVector<::mlir::Value> dynDims;
-      dynDims.resize(resType.getRank());
-      for (auto arg : {lhs, rhs}) {
-        auto operandTy = arg.getType().cast<::mlir::ShapedType>();
-        for (int i = 0; i < operandTy.getRank(); i++) {
-          if (operandTy.isDynamicDim(i) && !dynDims[i])
-            dynDims[i] = rewriter.create<::mlir::tensor::DimOp>(loc, arg, i);
-        }
-      }
-      llvm::SmallVector<::mlir::Value> filteredDims;
-      for (auto value : dynDims) {
-        if (value) {
-          filteredDims.push_back(value);
-        }
-      }
-      auto tensor = createEmptyTensor(rewriter, loc, elTyp, filteredDims);
+      // create output tensor with right dimensions
+      auto tensor = createEmptyTensor(rewriter, loc, resType, {lhs, rhs});
 
       // we need affine maps for linalg::generic
       // as long as we have no proper support for rank-reduced sizes above
@@ -723,7 +737,7 @@ struct EWBinOpLowering
       auto resMap = rewriter.getMultiDimIdentityMap(resType.getRank());
 
       // we just make all dims parallel
-      llvm::SmallVector<mlir::utils::IteratorType> iterators(
+      ::mlir::SmallVector<mlir::utils::IteratorType> iterators(
           rank, ::mlir::utils::IteratorType::parallel);
 
       // get the body builder for our binop and create genericop
@@ -737,6 +751,140 @@ struct EWBinOpLowering
                   iterators, bodyBuilder)
               .getResult(0);
     }
+    rewriter.replaceOp(op, newOp);
+
+    return ::mlir::success();
+  }
+};
+
+/// get a body builder for given binary operation and result type.
+/// Accepts a result type to insert a cast after the operation if needed
+/// FIXME: add missing ops
+static BodyType getBodyBuilder(::imex::ptensor::EWUnyOpId binOp,
+                               ::mlir::Type typ) {
+  switch (binOp) {
+  case ptensor::ABS:
+    return buildTrivialUnary<::mlir::math::AbsIOp, ::mlir::math::AbsFOp>(typ);
+  case ptensor::ATAN:
+    return buildTrivialUnary<void, ::mlir::math::AtanOp>(typ);
+  case ptensor::CEIL:
+    return buildTrivialUnary<void, ::mlir::math::CeilOp>(typ);
+  case ptensor::COS:
+    return buildTrivialUnary<void, ::mlir::math::CosOp>(typ);
+  case ptensor::ERF:
+    return buildTrivialUnary<void, ::mlir::math::ErfOp>(typ);
+  case ptensor::EXP:
+    return buildTrivialUnary<void, ::mlir::math::ExpOp>(typ);
+  case ptensor::EXPM1:
+    return buildTrivialUnary<void, ::mlir::math::ExpM1Op>(typ);
+  case ptensor::FLOOR:
+    return buildTrivialUnary<void, ::mlir::math::FloorOp>(typ);
+  case ptensor::LOG:
+    return buildTrivialUnary<void, ::mlir::math::LogOp>(typ);
+  case ptensor::LOG1P:
+    return buildTrivialUnary<void, ::mlir::math::Log1pOp>(typ);
+  case ptensor::LOG2:
+    return buildTrivialUnary<void, ::mlir::math::Log2Op>(typ);
+  case ptensor::LOG10:
+    return buildTrivialUnary<void, ::mlir::math::Log10Op>(typ);
+  case ptensor::ROUND:
+    return buildTrivialUnary<void, ::mlir::math::RoundOp>(typ);
+  case ptensor::SIN:
+    return buildTrivialUnary<void, ::mlir::math::SinOp>(typ);
+  case ptensor::SQRT:
+    return buildTrivialUnary<void, ::mlir::math::SqrtOp>(typ);
+  case ptensor::TAN:
+    return buildTrivialUnary<void, ::mlir::math::TanOp>(typ);
+  case ptensor::TANH:
+    return buildTrivialUnary<void, ::mlir::math::TanhOp>(typ);
+  case ptensor::TRUNC:
+    return buildTrivialUnary<void, ::mlir::math::TruncOp>(typ);
+  default:
+    assert(0 && "unsupported elementwise binary operation");
+  };
+}
+
+::mlir::Value createUnaryTosaOp(::mlir::Location loc,
+                                ::imex::ptensor::EWUnyOpId binOpId,
+                                ::mlir::ConversionPatternRewriter &rewriter,
+                                ::mlir::TensorType returnType,
+                                ::mlir::Value src) {
+  switch (binOpId) {
+  case ptensor::LOGICAL_NOT:
+    return rewriter.create<mlir::tosa::LogicalNotOp>(loc, returnType, src)
+        .getResult();
+  default:
+    break;
+  };
+  return ::mlir::Value();
+}
+
+/// Convert PTensor's elementwise unary operations and their return type to
+/// Linalg/tensor. The given op's type is expected to convert to the appropriate
+/// type (shape and element-type).
+/// Also needs some arith and affine (for linalg::genericop).
+struct EWUnyOpLowering
+    : public ::mlir::OpConversionPattern<::imex::ptensor::EWUnyOp> {
+  using OpConversionPattern::OpConversionPattern;
+
+  ::mlir::LogicalResult
+  matchAndRewrite(::imex::ptensor::EWUnyOp op,
+                  ::imex::ptensor::EWUnyOp::Adaptor adaptor,
+                  ::mlir::ConversionPatternRewriter &rewriter) const override {
+    auto loc = op.getLoc();
+    // We expect to lower PTensors
+    auto srcPtTyp =
+        op.getSrc().getType().dyn_cast<::imex::ptensor::PTensorType>();
+    if (!srcPtTyp) {
+      // FIXME type casting
+      return ::mlir::failure();
+    }
+
+    auto resType = op->getResult(0)
+                       .getType()
+                       .cast<::imex::ptensor::PTensorType>()
+                       .getTensorType();
+
+    // get the input as tensors
+    auto src = adaptor.getSrc();
+    auto srcTnsr = src.getType().cast<::mlir::TensorType>();
+
+    // we expect tensorType as operands
+    auto elTyp = srcTnsr.getElementType();
+    auto rank = srcTnsr.getRank();
+
+    const ::imex::ptensor::EWUnyOpId binOpId =
+        (::imex::ptensor::EWUnyOpId)adaptor.getOp()
+            .cast<::mlir::IntegerAttr>()
+            .getInt();
+
+    ::mlir::Value newOp =
+        createUnaryTosaOp(loc, binOpId, rewriter, resType, src);
+
+    if (!newOp) {
+      // generate linalg.generic loop
+
+      // create output tensor with right dimensions
+      auto tensor = createEmptyTensor(rewriter, loc, resType, {src});
+
+      // we need affine maps for linalg::generic
+      const ::mlir::AffineMap map = ::mlir::AffineMap::getMultiDimIdentityMap(
+          rank, rewriter.getContext());
+      ::mlir::SmallVector<::mlir::AffineMap> maps(2, map);
+      // we just make all dims parallel
+      ::mlir::SmallVector<mlir::utils::IteratorType> iterators(
+          rank, ::mlir::utils::IteratorType::parallel);
+
+      // get the body builder for our binop and create genericop
+      // FIXME: make createParFor ready for this
+      auto bodyBuilder = getBodyBuilder(binOpId, elTyp);
+      newOp = rewriter
+                  .create<::mlir::linalg::GenericOp>(
+                      loc, tensor.getType(), ::mlir::ValueRange{src}, tensor,
+                      maps, iterators, bodyBuilder)
+                  .getResult(0);
+    }
+
     rewriter.replaceOp(op, newOp);
 
     return ::mlir::success();
@@ -791,7 +939,7 @@ struct ReductionOpLowering
     auto inpTnsrTyp = inpTnsr.getType().cast<::mlir::TensorType>();
 
     // Get signless operands into vec
-    llvm::SmallVector<mlir::Value, 1> oprnds = {inpTnsr};
+    ::mlir::SmallVector<mlir::Value, 1> oprnds = {inpTnsr};
 
     // determine resulting element type from converted op-type
     auto retPtTyp =
@@ -806,7 +954,7 @@ struct ReductionOpLowering
     auto rank = static_cast<unsigned>(retTyp.getRank());
     assert(rank == 0);
     auto zeroI = createIndex(loc, rewriter, 0);
-    llvm::SmallVector<::mlir::Value> shapeVVec(rank, zeroI);
+    ::mlir::SmallVector<::mlir::Value> shapeVVec(rank, zeroI);
     // create new tensor
     auto zero = createInt(loc, rewriter, 0);
     auto tensor = createEmptyTensor(rewriter, loc, sElTyp, shapeVVec);
@@ -820,7 +968,7 @@ struct ReductionOpLowering
     // output map is "*->()"
     auto omap = ::mlir::AffineMap::get(inpRank, 0, rewriter.getContext());
     const ::mlir::AffineMap maps[] = {inpMap, omap};
-    llvm::SmallVector<mlir::utils::IteratorType> iterators(
+    ::mlir::SmallVector<mlir::utils::IteratorType> iterators(
         inpRank, mlir::utils::IteratorType::reduction);
 
     // create reduction op as linalg::generic
@@ -905,7 +1053,8 @@ struct ConvertPTensorToLinalgPass
     patterns.insert<MkPTensorLowering, ExtractTensorLowering,
                     ExtractRawPtrLowering, SubviewLowering, InsertSliceLowering,
                     ARangeLowering, LoadOpLowering, CreateLowering,
-                    EWBinOpLowering, ReductionOpLowering>(typeConverter, &ctxt);
+                    EWBinOpLowering, EWUnyOpLowering, ReductionOpLowering>(
+        typeConverter, &ctxt);
     ::mlir::populateFunctionOpInterfaceTypeConversionPattern<
         ::mlir::func::FuncOp>(patterns, typeConverter);
     ::mlir::populateReturnOpTypeConversionPattern(patterns, typeConverter);

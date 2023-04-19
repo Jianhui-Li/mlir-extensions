@@ -338,6 +338,55 @@ struct EWBinOpConverter
   }
 };
 
+/// Convert a global dist::EWUnyOp to ptensor::EWUnyOp on the local data.
+/// Assumes that the partitioning of the inputs are properly aligned.
+struct EWUnyOpConverter
+    : public ::mlir::OpConversionPattern<::imex::ptensor::EWUnyOp> {
+  using ::mlir::OpConversionPattern<
+      ::imex::ptensor::EWUnyOp>::OpConversionPattern;
+
+  /// Initialize the pattern.
+  void initialize() {
+    /// Signal that this pattern safely handles recursive application.
+    setHasBoundedRewriteRecursion();
+  }
+
+  ::mlir::LogicalResult
+  matchAndRewrite(::imex::ptensor::EWUnyOp op,
+                  ::imex::ptensor::EWUnyOp::Adaptor adaptor,
+                  ::mlir::ConversionPatternRewriter &rewriter) const override {
+
+    auto src = op.getSrc();
+    auto srcDtTyp = src.getType().dyn_cast<::imex::dist::DistTensorType>();
+    auto resDtTyp =
+        op.getResult().getType().dyn_cast<::imex::dist::DistTensorType>();
+    // return failure if wrong ops or not distributed
+    if (!srcDtTyp || !resDtTyp) {
+      return ::mlir::failure();
+    }
+
+    auto resPtTyp = resDtTyp.getPTensorType();
+
+    auto loc = op.getLoc();
+    // local operand
+    auto lSrc = createLocalTensorOf(loc, rewriter, src);
+
+    // return type same as src
+    auto res = rewriter.create<::imex::ptensor::EWUnyOp>(loc, resPtTyp,
+                                                         op.getOp(), lSrc);
+
+    // get global shape, offsets and team
+    auto team = createTeamOf(loc, rewriter, src);
+    auto gShape = createGlobalShapeOf(loc, rewriter, src);
+    auto lPart = createLocalPartition(loc, rewriter, src, team, gShape);
+    // and init our new dist tensor
+    rewriter.replaceOp(op, createDistTensor(loc, rewriter, res, true, gShape,
+                                            lPart.getLOffsets(), team));
+
+    return ::mlir::success();
+  }
+};
+
 // RuntimePrototypesOp -> func.func ops
 // adding required function prototypes to the module level
 struct RuntimePrototypesOpConverter
@@ -1093,11 +1142,14 @@ struct ConvertDistToStandardPass
     target.addDynamicallyLegalOp<::imex::ptensor::EWBinOp>(
         [&](::imex::ptensor::EWBinOp op) { return typeConverter.isLegal(op); });
 
+    target.addDynamicallyLegalOp<::imex::ptensor::EWUnyOp>(
+        [&](::imex::ptensor::EWUnyOp op) { return typeConverter.isLegal(op); });
+
     // All the dist conversion patterns/rewriter
     ::mlir::RewritePatternSet patterns(&ctxt);
     patterns.insert<
         InsertSliceOpConverter, SubviewOpConverter, EWBinOpConverter,
-        LocalBoundingBoxOpConverter, RePartitionOpConverter,
+        EWUnyOpConverter, LocalBoundingBoxOpConverter, RePartitionOpConverter,
         RuntimePrototypesOpConverter, NProcsOpConverter, PRankOpConverter,
         InitDistTensorOpConverter, LocalPartitionOpConverter,
         LocalOffsetForTargetSliceOpConverter, LocalTargetOfSliceOpConverter,

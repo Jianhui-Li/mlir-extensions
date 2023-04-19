@@ -544,8 +544,20 @@ def EWBinOp : PTensor_Op<"ewbin", []> {
         The broadcasting rules of the array-API are applied to operator and result types.
     }];
 
-    // arange takes 2 PTensorType operands: lhs and rhs
+    // ewbin takes 2 PTensorType operands: lhs and rhs
     let arguments = (ins AnyAttr:$op, AnyType:$lhs, AnyType:$rhs);
+    // result is a ptensor
+    let results = (outs AnyType);
+}
+
+def EWUnyOp : PTensor_Op<"ewuny", []> {
+    let summary = "Apply elementwise unary operation";
+    let description = [{
+        Apply the `op(src[i])` on all elements `i` and return a new ptensor.
+    }];
+
+    // ewuny takes 1 operand (PTensorType) and one attribute (unary operation)
+    let arguments = (ins AnyAttr:$op, AnyType:$src);
     // result is a ptensor
     let results = (outs AnyType);
 }

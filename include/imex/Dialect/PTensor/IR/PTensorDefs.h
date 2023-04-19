@@ -51,6 +51,44 @@ enum EWBinOpId : int {
   EWBINOPID_LAST
 };
 
+/// The set of supported elementwise unary operations
+enum EWUnyOpId : int {
+  ABS,
+  ACOS,
+  ACOSH,
+  ASIN,
+  ASINH,
+  ATAN,
+  ATANH,
+  CEIL,
+  COS,
+  COSH,
+  ERF,
+  EXP,
+  EXPM1,
+  FLOOR,
+  ISFINITE,
+  ISINF,
+  ISNAN,
+  LOG,
+  LOG1P,
+  LOG2,
+  LOG10,
+  ROUND,
+  SIGN,
+  SIN,
+  SINH,
+  SQUARE,
+  SQRT,
+  TAN,
+  TANH,
+  TRUNC,
+  NEGATIVE,
+  POSITIVE,
+  LOGICAL_NOT,
+  EWUNYOPID_LAST
+};
+
 /// The set of supported reduction operations
 enum ReduceOpId : int { MAX, MEAN, MIN, PROD, SUM, STD, VAR, REDUCEOPID_LAST };
 

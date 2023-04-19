@@ -176,6 +176,28 @@ inline auto createEmptyTensor(::mlir::OpBuilder &builder, ::mlir::Location loc,
       .getResult();
 }
 
+/// create an empty RankedTensor for given result tensor type and operand shapes
+inline auto createEmptyTensor(::mlir::OpBuilder &builder, ::mlir::Location loc,
+                              ::mlir::TensorType resType,
+                              const ::mlir::ValueRange &operands) {
+  ::mlir::SmallVector<::mlir::Value> dynDims(resType.getRank());
+  auto elType = resType.getElementType();
+  for (auto arg : operands) {
+    auto operandTy = arg.getType().cast<::mlir::ShapedType>();
+    for (int i = 0; i < operandTy.getRank(); i++) {
+      if (operandTy.isDynamicDim(i) && !dynDims[i])
+        dynDims[i] = builder.create<::mlir::tensor::DimOp>(loc, arg, i);
+    }
+  }
+  ::mlir::SmallVector<::mlir::Value> filteredDims;
+  for (auto value : dynDims) {
+    if (value) {
+      filteredDims.push_back(value);
+    }
+  }
+  return createEmptyTensor(builder, loc, elType, filteredDims);
+}
+
 /// get dyn-sized mlir::RankedTensorType for given rank and elType
 /// if strided==true make it a strided layout
 inline auto getMemRefType(::mlir::MLIRContext *ctxt, int64_t rank,

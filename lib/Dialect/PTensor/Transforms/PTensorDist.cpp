@@ -355,6 +355,52 @@ struct DistEWBinOpRWP : public RecOpRewritePattern<::imex::ptensor::EWBinOp> {
   }
 };
 
+/// Rewrite ::imex::ptensor::EWUnyOp to get a distributed elementwise
+/// unary op if operands are distributed.
+/// Repartitions the input tensor as needed.
+/// Create global, distributed output tensor with same shape as the operand.
+/// The local partitions of the operand (e.g. RankedTensor) are wrapped in
+/// non-distributed PTensors and re-applied to ewunyop.
+/// op gets replaced with global DistTensor
+struct DistEWUnyOpRWP : public RecOpRewritePattern<::imex::ptensor::EWUnyOp> {
+  using RecOpRewritePattern::RecOpRewritePattern;
+
+  ::mlir::LogicalResult
+  matchAndRewrite(::imex::ptensor::EWUnyOp op,
+                  ::mlir::PatternRewriter &rewriter) const override {
+
+    // get input and type
+    auto srcDTTyp =
+        op.getSrc().getType().dyn_cast<::imex::dist::DistTensorType>();
+    auto outDTTyp =
+        op.getResult().getType().dyn_cast<::imex::dist::DistTensorType>();
+    auto outPTTyp =
+        op.getResult().getType().dyn_cast<::imex::ptensor::PTensorType>();
+
+    if (((!srcDTTyp) && outPTTyp) || outDTTyp) {
+      return ::mlir::failure();
+    }
+
+    auto loc = op.getLoc();
+
+    // Repartition if necessary
+    // FIXME: this breaks with dim-sizes==1, even if statically known
+    auto src = op.getSrc();
+    auto rbSrc =
+        srcDTTyp.getPTensorType().getRank() == 0
+            ? src
+            : createRePartition(loc, rewriter, src); //, tOffs, tSizes);
+
+    // replace with dist version of ewbinop
+    auto vDTTYp =
+        ::imex::dist::DistTensorType::get(rewriter.getContext(), outPTTyp);
+    rewriter.replaceOpWithNewOp<::imex::ptensor::EWUnyOp>(op, vDTTYp,
+                                                          op.getOp(), rbSrc);
+
+    return ::mlir::success();
+  }
+};
+
 /// Rewrite ::imex::ptensor::ReductionOp to get a distributed
 /// reduction if operand is distributed.
 /// Create global, distributed 0d output tensor.
@@ -413,8 +459,9 @@ struct PTensorDistPass : public ::imex::PTensorDistBase<PTensorDistPass> {
 
     ::mlir::FrozenRewritePatternSet patterns;
     insertPatterns<DistARangeOpRWP, DistCreateOpRWP, DistEWBinOpRWP,
-                   DistReductionOpRWP, DistExtractTensorOpRWP, DistSubviewOpRWP,
-                   DistInsertSliceOpRWP>(getContext(), patterns);
+                   DistEWUnyOpRWP, DistReductionOpRWP, DistExtractTensorOpRWP,
+                   DistSubviewOpRWP, DistInsertSliceOpRWP>(getContext(),
+                                                           patterns);
     (void)::mlir::applyPatternsAndFoldGreedily(this->getOperation(), patterns);
   }
 };
