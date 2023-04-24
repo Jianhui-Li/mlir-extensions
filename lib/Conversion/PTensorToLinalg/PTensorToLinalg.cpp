@@ -412,45 +412,54 @@ struct InsertSliceLowering
 };
 #endif
 
-/// Convert PTensor's arange and its return type to Linalg/tensor.
+/// Convert PTensor's linspace and its return type to Linalg/tensor.
 /// Also needs some arith and affine (for linalg::genericop).
-struct ARangeLowering
-    : public ::mlir::OpConversionPattern<::imex::ptensor::ARangeOp> {
+struct LinSpaceLowering
+    : public ::mlir::OpConversionPattern<::imex::ptensor::LinSpaceOp> {
   using OpConversionPattern::OpConversionPattern;
 
   ::mlir::LogicalResult
-  matchAndRewrite(::imex::ptensor::ARangeOp op,
-                  ::imex::ptensor::ARangeOp::Adaptor adaptor,
+  matchAndRewrite(::imex::ptensor::LinSpaceOp op,
+                  ::imex::ptensor::LinSpaceOp::Adaptor adaptor,
                   ::mlir::ConversionPatternRewriter &rewriter) const override {
     auto loc = op.getLoc();
 
-    // Get Operands
-    auto start = easyIdx(loc, rewriter, adaptor.getStart());
-    auto stop = easyIdx(loc, rewriter, adaptor.getStop());
-    auto step = easyIdx(loc, rewriter, adaptor.getStep());
+    auto start = adaptor.getStart();
+    auto stop = adaptor.getStop();
+    auto count = adaptor.getNum();
+    bool endpoint = adaptor.getEndpoint();
     auto retPtTyp = op.getType().dyn_cast<::imex::ptensor::PTensorType>();
-    if (!retPtTyp)
-      return ::mlir::failure();
 
-    // get arange count
-    auto count = createCountARange(rewriter, loc, start, stop, step);
+    if (!(start.getType().isIntOrIndexOrFloat() &&
+          stop.getType().isIntOrIndexOrFloat() &&
+          count.getType().isIntOrIndex() && retPtTyp)) {
+      return ::mlir::failure();
+    } // FIXME type promotion
+
+    // cast types and get step
+    auto f64Type = rewriter.getF64Type();
+    count = createIndexCast(loc, rewriter, count);
+    start = createCast(loc, rewriter, start, f64Type);
+    stop = createCast(loc, rewriter, stop, f64Type);
+    auto step = createStepLinSpace(rewriter, loc, start, stop, count, endpoint);
 
     // init tensor
-    auto elTyp = retPtTyp.getElementType();
     auto rank = retPtTyp.getRank();
+    auto elTyp = retPtTyp.getElementType();
     auto tensor = createEmptyTensor(rewriter, loc, elTyp, {count});
 
-    // The loop body fills with arange values
+    // The loop body fills with values
     // accepting no input, the lambda simply captures start and step
-    auto body = [&start, &step, &elTyp](::mlir::OpBuilder &builder,
-                                        ::mlir::Location loc,
-                                        ::mlir::ValueRange args) {
+    auto body = [&](::mlir::OpBuilder &builder, ::mlir::Location loc,
+                    ::mlir::ValueRange args) {
       auto dim = getIntAttr<64>(builder, 0);
-      auto idx = easyIdx(loc, builder,
-                         builder.create<::mlir::linalg::IndexOp>(loc, dim));
-      auto val = start + (step * idx);
+      auto idx = createCast(loc, builder,
+                            builder.create<::mlir::linalg::IndexOp>(loc, dim),
+                            f64Type);
+      ::mlir::Value val = builder.create<::mlir::arith::AddFOp>(
+          loc, builder.create<::mlir::arith::MulFOp>(loc, step, idx), start);
       (void)builder.create<::mlir::linalg::YieldOp>(
-          loc, createIndexCast(loc, builder, val.get(), elTyp));
+          loc, createCast(loc, rewriter, val, elTyp));
     };
 
     auto res =
@@ -1052,7 +1061,7 @@ struct ConvertPTensorToLinalgPass
     ::mlir::RewritePatternSet patterns(&ctxt);
     patterns.insert<MkPTensorLowering, ExtractTensorLowering,
                     ExtractRawPtrLowering, SubviewLowering, InsertSliceLowering,
-                    ARangeLowering, LoadOpLowering, CreateLowering,
+                    LinSpaceLowering, LoadOpLowering, CreateLowering,
                     EWBinOpLowering, EWUnyOpLowering, ReductionOpLowering>(
         typeConverter, &ctxt);
     ::mlir::populateFunctionOpInterfaceTypeConversionPattern<

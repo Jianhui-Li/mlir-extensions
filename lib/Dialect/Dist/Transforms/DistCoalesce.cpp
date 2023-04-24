@@ -91,7 +91,7 @@ struct DistCoalescePass : public ::imex::DistCoalesceBase<DistCoalescePass> {
   ::mlir::Operation *getBase(const ::mlir::Value &val) {
     if (auto op = val.getDefiningOp<::imex::dist::InitDistTensorOp>()) {
       auto pt = op.getPTensor();
-      if (isDefByAnyOf<::imex::ptensor::CreateOp, ::imex::ptensor::ARangeOp,
+      if (isDefByAnyOf<::imex::ptensor::CreateOp, ::imex::ptensor::LinSpaceOp,
                        ::imex::ptensor::EWBinOp, ::imex::ptensor::EWUnyOp,
                        ::imex::ptensor::ReductionOp>(pt)) {
         return op;

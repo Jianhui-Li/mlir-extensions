@@ -475,32 +475,23 @@ def LoadOp : PTensor_Op<"load",
   // let hasCanonicalizer = 1;
 }
 
-def ARangeOp : PTensor_Op<"arange", [AttrSizedOperandSegments]> {
-    let summary = "Create an arange (see array-API)";
+def LinSpaceOp : PTensor_Op<"linspace", [AttrSizedOperandSegments]> {
+    let summary = "Returns evenly spaced numbers over a specified interval.";
     let description = [{
-        Returns evenly `step`-spaced values within the half-open interval [`start`, `stop`) as a ptensor of rank 1.
+        Number of of generated values is either num or num+1 depending on whether endpoint is True or False, respectively.
+        See Array API.
 
         Optionally assigns it to device `device`, and team `team`.
     }];
 
-    let arguments = (ins AnyType:$start, AnyType:$stop, AnyType:$step,
+    let arguments = (ins AnyType:$start, AnyType:$stop, AnyType:$num, UnitAttr:$endpoint,
                          Optional<AnyType>:$device, Optional<AnyType>:$team);
     // result is a ptensor
     let results = (outs PTensor_PTensor);
 
     let assemblyFormat = [{
-      $start $stop $step oilist(`device` $device | `team` $team) attr-dict `:` `(` type(operands) `)` `->` qualified(type(results))
+      $start $stop $num (`true` $endpoint^):(`false`)? oilist(`device` $device | `team` $team) attr-dict `:` `(` type(operands) `)` `->` qualified(type(results))
     }];
-
-    let builders = [
-        // auto-deduce return type
-        OpBuilder<(ins "::mlir::Value":$start, "::mlir::Value":$stop, "::mlir::Value":$step, "::mlir::Value":$device, "::mlir::Value":$team), [{
-            build($_builder, $_state,
-                  ::imex::ptensor::PTensorType::get({::mlir::ShapedType::kDynamic},
-                                                    $_builder.getI64Type()), // FIXME device
-                  start, stop, step, device, team);
-        }]>,
-    ];
 }
 
 def CreateOp : PTensor_Op<"create", [AttrSizedOperandSegments]> {

@@ -30,12 +30,12 @@ func.func @test_insert_slice(%arg0: !ptensor.ptensor<?xi64>, %arg1: !ptensor.pte
 // CHECK-NEXT: ptensor.insert_slice %arg1 into %arg0[[[C0]]] [[[C1]]] [[[C1]]] : !ptensor.ptensor<?xi64> into !ptensor.ptensor<?xi64>
 
 // -----
-func.func @test_arange(%arg0: si64, %arg1: si64, %arg2: si64) -> !ptensor.ptensor<?xi64> {
-    %0 = ptensor.arange %arg0 %arg1 %arg2 : (si64, si64, si64) -> !ptensor.ptensor<?xi64>
+func.func @test_linspace(%arg0: si64, %arg1: si64, %arg2: si64) -> !ptensor.ptensor<?xi64> {
+    %0 = ptensor.linspace %arg0 %arg1 %arg2 false : (si64, si64, si64) -> !ptensor.ptensor<?xi64>
     return %0 : !ptensor.ptensor<?xi64>
 }
-// CHECK-LABEL: @test_arange
-// CHECK-NEXT: ptensor.arange %arg0 %arg1 %arg2 : (si64, si64, si64) -> !ptensor.ptensor<?xi64>
+// CHECK-LABEL: @test_linspace
+// CHECK-NEXT: ptensor.linspace %arg0 %arg1 %arg2 false : (si64, si64, si64) -> !ptensor.ptensor<?xi64>
 
 func.func @test_create(%arg0: index, %arg1: index, %arg2: index, %arg3: i64) -> !ptensor.ptensor<?x?x?xf64> {
     %0 = ptensor.create %arg0, %arg1, %arg2 {dtype = 0 : i8} : (index, index, index) -> !ptensor.ptensor<?x?x?xf64>

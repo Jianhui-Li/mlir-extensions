@@ -16,17 +16,19 @@ func.func @test_subview(%arg0: !ptensor.ptensor<?xi64>) -> !ptensor.ptensor<?xi6
 // CHECK-NEXT: return [[V1]] : tensor<?xi64>
 
 // -----
-func.func @test_arange(%arg0: i64, %arg1: i64, %arg2: i64) -> !ptensor.ptensor<?xindex> {
-    %0 = ptensor.arange %arg0 %arg1 %arg2 : (i64, i64, i64) -> !ptensor.ptensor<?xindex>
+func.func @test_linspace(%arg0: i64, %arg1: i64, %arg2: index) -> !ptensor.ptensor<?xindex> {
+    %0 = ptensor.linspace %arg0 %arg1 %arg2 false : (i64, i64, index) -> !ptensor.ptensor<?xindex>
     return %0 : !ptensor.ptensor<?xindex>
 }
-// CHECK-LABEL: @test_arange
-// CHECK-DAG: [[C0:%.*]] = arith.select
-// CHECK-DAG: [[C01:%.*]] = arith.subi
-// CHECK-DAG: [[C1:%.*]] = arith.addi
-// CHECK: [[C2:%.*]] = arith.addi [[C1]], [[C0]] : index
-// CHECK: linalg.generic{{.*}}["parallel"]
-// CHECK: return %{{[0-9]+}} : tensor<?xindex>
+// CHECK-LABEL: @test_linspace
+// CHECK: arith.sitofp
+// CHECK: arith.sitofp
+// CHECK: arith.index_cast
+// CHECK: arith.subf
+// CHECK: arith.divf
+// CHECK: tensor.empty
+// CHECK: [[C0:%.*]] = linalg.generic{{.*}}["parallel"]
+// CHECK: return [[C0]] : tensor<?xindex>
 
 func.func @test_create(%arg0: index, %arg1: index, %arg2: i64) -> !ptensor.ptensor<?x?xi64> {
     %0 = ptensor.create %arg0, %arg1 value %arg2 {dtype = 2 : i8} : (index, index, i64) -> !ptensor.ptensor<?x?xi64>

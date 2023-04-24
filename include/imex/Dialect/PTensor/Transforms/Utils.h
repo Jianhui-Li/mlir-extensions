@@ -19,24 +19,23 @@
 
 namespace imex {
 
-/// create operations computing the count of elements a
-/// arange(start, stop, step) would have.
-/// @return number of elements an arange(start, stop, step) would have
-/// (::mlir::Value)
-inline ::mlir::Value createCountARange(::mlir::OpBuilder &builder,
-                                       ::mlir::Location loc,
-                                       const EasyIdx &start,
-                                       const EasyIdx &stop,
-                                       const EasyIdx &step) {
-  // Create constants 0, 1, -1 for later
-  auto zero = easyIdx(loc, builder, 0);
-  auto one = easyIdx(loc, builder, 1);
-  auto mone = easyIdx(loc, builder, -1);
-
-  // Compute number of elements as
-  //   (stop - start + step + (step < 0 ? 1 : -1)) / step
-  return (((stop - start) + step + step.slt(zero).select(one, mone)) / step)
-      .get();
+/// create operations computing the space between elements a
+/// linspace(start, stop, num) would have.
+/// @return step a linspace(start, stop, num) would have (::mlir::Value)
+inline ::mlir::Value createStepLinSpace(::mlir::OpBuilder &builder,
+                                        ::mlir::Location loc,
+                                        ::mlir::Value start, ::mlir::Value stop,
+                                        ::mlir::Value num, bool endpoint) {
+  auto typ = builder.getF64Type();
+  start = createCast(loc, builder, start, typ);
+  stop = createCast(loc, builder, stop, typ);
+  num = createCast(loc, builder, num, typ);
+  if (endpoint) {
+    auto one = createFloat(loc, builder, 1);
+    num = builder.create<::mlir::arith::SubFOp>(loc, num, one);
+  }
+  return builder.create<::mlir::arith::DivFOp>(
+      loc, builder.create<::mlir::arith::SubFOp>(loc, stop, start), num);
 }
 
 } // namespace imex

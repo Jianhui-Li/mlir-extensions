@@ -12,7 +12,7 @@ func.func @main() {
     %c2 = arith.constant 2 : i64
     %c5 = arith.constant 5 : i64
 
-    %0 = ptensor.arange %c0 %c5 %c1 : (i64, i64, i64) -> !ptensor.ptensor<?xi64>
+    %0 = ptensor.linspace %c0 %c5 %c5 false : (i64, i64, i64) -> !ptensor.ptensor<?xi64>
     %1 = ptensor.create value %c2 {dtype = 2 : i8} : (i64) -> !ptensor.ptensor<i64>
     %2 = ptensor.create %i1 value %c2 {dtype = 2 : i8} : (index, i64) -> !ptensor.ptensor<1xi64>
     %3 = ptensor.create %i1, %i3 value %c2 {dtype = 2 : i8} : (index, index, i64) -> !ptensor.ptensor<1x?xi64>

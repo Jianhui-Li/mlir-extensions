@@ -216,16 +216,17 @@ struct DistInsertSliceOpRWP
   }
 };
 
-/// Rewriting ::imex::ptensor::ARangeOp to get a distributed arange if
+/// Rewriting ::imex::ptensor::LinSpaceOp to get a distributed linspace if
 /// applicable. Create global, distributed output Tensor as defined by operands.
 /// The local partition (e.g. a RankedTensor) are wrapped in a
-/// non-distributed PTensor and re-applied to arange op.
+/// non-distributed PTensor and re-applied to LinSpaceOp.
 /// op gets replaced with global DistTensor
-struct DistARangeOpRWP : public RecOpRewritePattern<::imex::ptensor::ARangeOp> {
+struct DistLinSpaceOpRWP
+    : public RecOpRewritePattern<::imex::ptensor::LinSpaceOp> {
   using RecOpRewritePattern::RecOpRewritePattern;
 
   ::mlir::LogicalResult
-  matchAndRewrite(::imex::ptensor::ARangeOp op,
+  matchAndRewrite(::imex::ptensor::LinSpaceOp op,
                   ::mlir::PatternRewriter &rewriter) const override {
     auto loc = op.getLoc();
     // nothing to do if no team
@@ -233,12 +234,25 @@ struct DistARangeOpRWP : public RecOpRewritePattern<::imex::ptensor::ARangeOp> {
     if (!team)
       return ::mlir::failure();
 
-    // get operands
-    auto start = easyIdx(loc, rewriter, op.getStart());
-    auto stop = easyIdx(loc, rewriter, op.getStop());
-    auto step = easyIdx(loc, rewriter, op.getStep());
-    // compute global count (so we know the shape)
-    auto count = createCountARange(rewriter, loc, start, stop, step);
+    auto start = op.getStart();
+    auto stop = op.getStop();
+    auto count = op.getNum();
+    bool endpoint = op.getEndpoint();
+    auto retPtTyp = op.getType().dyn_cast<::imex::ptensor::PTensorType>();
+
+    if (!(start.getType().isIntOrIndexOrFloat() &&
+          stop.getType().isIntOrIndexOrFloat() &&
+          count.getType().isIntOrIndex() && retPtTyp)) {
+      return ::mlir::failure();
+    } // FIXME type promotion
+
+    // cast types and get step
+    count = createIndexCast(loc, rewriter, count);
+    auto f64Type = rewriter.getF64Type();
+    start = createCast(loc, rewriter, start, f64Type);
+    stop = createCast(loc, rewriter, stop, f64Type);
+    auto step = createStepLinSpace(rewriter, loc, start, stop, count, endpoint);
+
     // get number of procs and prank
     auto nProcs = rewriter.create<::imex::dist::NProcsOp>(loc, team);
     auto pRank = rewriter.create<::imex::dist::PRankOp>(loc, team);
@@ -249,18 +263,21 @@ struct DistARangeOpRWP : public RecOpRewritePattern<::imex::ptensor::ARangeOp> {
     auto lShape = lPart.getLShape();
     auto lOffs = lPart.getLOffsets();
 
-    // we can now compute local arange
-    auto lSz = easyIdx(loc, rewriter, lShape[0]);
-    auto off = easyIdx(loc, rewriter, lOffs[0]);
-    start = start + (off * step);
-    // create stop
-    stop = start + (step * lSz); // start + (lShape[0] * step)
-    // finally create local arange
-    auto arres = rewriter.create<::imex::ptensor::ARangeOp>(
-        loc, start.get(), stop.get(), step.get(), op.getDevice(), nullptr);
+    // use local shape and offset to compute local linspace
+    auto off = createCast(loc, rewriter, lOffs[0], f64Type);
+    auto lSz = createCast(loc, rewriter, lShape[0], f64Type);
+
+    start = rewriter.create<::mlir::arith::AddFOp>(
+        loc, rewriter.create<::mlir::arith::MulFOp>(loc, step, off), start);
+    stop = rewriter.create<::mlir::arith::AddFOp>(
+        loc, rewriter.create<::mlir::arith::MulFOp>(loc, step, lSz), start);
+
+    // finally create local linspace
+    auto res = rewriter.create<::imex::ptensor::LinSpaceOp>(
+        loc, retPtTyp, start, stop, lShape[0], false, op.getDevice(), nullptr);
 
     rewriter.replaceOp(
-        op, createDistTensor(loc, rewriter, arres, true, {count}, lOffs, team));
+        op, createDistTensor(loc, rewriter, res, true, {count}, lOffs, team));
     return ::mlir::success();
   }
 };
@@ -462,7 +479,7 @@ struct PTensorDistPass : public ::imex::PTensorDistBase<PTensorDistPass> {
   void runOnOperation() override {
 
     ::mlir::FrozenRewritePatternSet patterns;
-    insertPatterns<DistARangeOpRWP, DistCreateOpRWP, DistEWBinOpRWP,
+    insertPatterns<DistLinSpaceOpRWP, DistCreateOpRWP, DistEWBinOpRWP,
                    DistEWUnyOpRWP, DistReductionOpRWP, DistExtractTensorOpRWP,
                    DistSubviewOpRWP, DistInsertSliceOpRWP>(getContext(),
                                                            patterns);

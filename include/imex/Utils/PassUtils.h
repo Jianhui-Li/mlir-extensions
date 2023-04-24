@@ -80,6 +80,41 @@ inline ::mlir::Value createIndexCast(const ::mlir::Location &loc,
                    .getResult();
 }
 
+// cast between different scalar types
+inline ::mlir::Value createCast(const ::mlir::Location &loc,
+                                ::mlir::OpBuilder &builder, ::mlir::Value val,
+                                ::mlir::Type dTyp) {
+  auto vTyp = val.getType();
+  assert(vTyp.isIntOrIndexOrFloat() && dTyp.isIntOrIndexOrFloat());
+  if (vTyp == dTyp) {
+    return val;
+  } else if (vTyp.isIntOrIndex() && dTyp.isIntOrIndex()) {
+    if ((vTyp.isIndex() || dTyp.isIndex())) {
+      return createIndexCast(loc, builder, val, dTyp);
+    } else if (vTyp.getIntOrFloatBitWidth() < dTyp.getIntOrFloatBitWidth()) {
+      return builder.create<::mlir::arith::ExtSIOp>(loc, dTyp, val);
+    } else {
+      return builder.create<::mlir::arith::TruncIOp>(loc, dTyp, val);
+    }
+  } else if (vTyp.isIntOrIndex()) {
+    val = createIndexCast(loc, builder, val, builder.getIntegerType(64));
+    return builder.create<::mlir::arith::SIToFPOp>(loc, dTyp, val);
+  } else if (dTyp.isIntOrIndex()) {
+    if (dTyp == builder.getIndexType()) {
+      val = builder.create<::mlir::arith::FPToSIOp>(
+          loc, builder.getIntegerType(64), val);
+      return createIndexCast(loc, builder, val, dTyp);
+    } else {
+      return builder.create<::mlir::arith::FPToSIOp>(loc, dTyp, val);
+    }
+  } else if (vTyp.getIntOrFloatBitWidth() < dTyp.getIntOrFloatBitWidth()) {
+    return builder.create<::mlir::arith::ExtFOp>(loc, dTyp, val);
+  }
+  assert(!(vTyp.isIntOrIndex() || vTyp.isIntOrIndex()) &&
+         vTyp.getIntOrFloatBitWidth() > dTyp.getIntOrFloatBitWidth());
+  return builder.create<::mlir::arith::TruncFOp>(loc, dTyp, val);
+}
+
 /// @return array of static sizes form ValueRange: actual size if constant,
 /// kDynamic if not
 inline ::mlir::SmallVector<int64_t>
@@ -151,14 +186,15 @@ getMixedAsValues(const ::mlir::Location &loc, ::mlir::OpBuilder &builder,
 /// similar to mlir::decomposeMixedValues but converting const values tot
 /// statics
 inline void
-dispatchIndexValues(const ::mlir::ValueRange &sizes,
+dispatchIndexValues(::mlir::OpBuilder &builder, ::mlir::Location loc,
+                    const ::mlir::ValueRange &sizes,
                     ::mlir::SmallVectorImpl<::mlir::Value> &dynamicVec,
                     ::mlir::SmallVectorImpl<int64_t> &staticVec) {
   for (auto v : sizes) {
     if (auto cval = ::mlir::getConstantIntValue(v); cval && cval.value() == 1) {
       staticVec.emplace_back(cval.value());
     } else {
-      dynamicVec.emplace_back(v);
+      dynamicVec.emplace_back(createIndexCast(loc, builder, v));
       staticVec.emplace_back(::mlir::ShapedType::kDynamic);
     }
   }
@@ -170,7 +206,7 @@ inline auto createEmptyTensor(::mlir::OpBuilder &builder, ::mlir::Location loc,
                               const ::mlir::ValueRange &shp) {
   ::mlir::SmallVector<int64_t> staticSizes;
   ::mlir::SmallVector<mlir::Value> dynamicSizes;
-  dispatchIndexValues(shp, dynamicSizes, staticSizes);
+  dispatchIndexValues(builder, loc, shp, dynamicSizes, staticSizes);
   return builder
       .create<::mlir::tensor::EmptyOp>(loc, staticSizes, elType, dynamicSizes)
       .getResult();

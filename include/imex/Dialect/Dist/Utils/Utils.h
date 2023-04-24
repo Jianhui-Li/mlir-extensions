@@ -124,7 +124,7 @@ inline bool hasWriteBetween(::mlir::Operation *a, ::mlir::Operation *b,
     return false;
   if (::mlir::dyn_cast<::imex::ptensor::InsertSliceOp>(b) ||
       ::mlir::dyn_cast<::imex::ptensor::CreateOp>(b) ||
-      ::mlir::dyn_cast<::imex::ptensor::ARangeOp>(b) ||
+      ::mlir::dyn_cast<::imex::ptensor::LinSpaceOp>(b) ||
       ::mlir::dyn_cast<::imex::ptensor::ReductionOp>(b)) {
     return true;
   } else if (auto op = ::mlir::dyn_cast<::imex::dist::InitDistTensorOp>(b)) {
