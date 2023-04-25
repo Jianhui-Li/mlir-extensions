@@ -647,6 +647,36 @@ using TeamOfOpConverter = ExtractFromDistOpConverter<::imex::dist::TeamOfOp>;
 using IsBalancedOpConverter =
     ExtractFromDistOpConverter<::imex::dist::IsBalancedOp>;
 
+struct CastOpConverter
+    : public ::mlir::OpConversionPattern<::imex::dist::CastOp> {
+  using ::mlir::OpConversionPattern<::imex::dist::CastOp>::OpConversionPattern;
+
+  ::mlir::LogicalResult
+  matchAndRewrite(::imex::dist::CastOp op,
+                  ::imex::dist::CastOp::Adaptor adaptor,
+                  ::mlir::ConversionPatternRewriter &rewriter) const override {
+    auto src = op.getSource();
+    auto dtType = src.getType().dyn_cast<::imex::dist::DistTensorType>();
+    if (dtType) {
+      rewriter.replaceOp(op, src);
+      return ::mlir::success();
+    }
+
+    auto ptType = src.getType().dyn_cast<::imex::ptensor::PTensorType>();
+    if (!ptType) {
+      return ::mlir::failure();
+    }
+
+    auto loc = op.getLoc();
+    auto rank = ptType.getRank();
+    auto zero = createIndex(loc, rewriter, 0);
+    ::mlir::SmallVector<::mlir::Value> zeros(rank, zero);
+    rewriter.replaceOp(
+        op, createDistTensor(loc, rewriter, src, true, zeros, zeros, zero));
+    return ::mlir::success();
+  }
+};
+
 /// Lowering ::imex::dist::LocalPartitionOp: Compute default partition
 /// for a given shape and number of processes.
 /// We currently assume evenly split data.
@@ -1153,7 +1183,7 @@ struct ConvertDistToStandardPass
         RuntimePrototypesOpConverter, NProcsOpConverter, PRankOpConverter,
         InitDistTensorOpConverter, LocalPartitionOpConverter,
         LocalOffsetForTargetSliceOpConverter, LocalTargetOfSliceOpConverter,
-        GlobalShapeOfOpConverter, IsBalancedOpConverter,
+        GlobalShapeOfOpConverter, IsBalancedOpConverter, CastOpConverter,
         LocalTensorOfOpConverter, LocalOffsetsOfOpConverter, TeamOfOpConverter,
         AllReduceOpConverter>(typeConverter, &ctxt);
     // This enables the function boundary handling with the above

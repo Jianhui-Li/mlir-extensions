@@ -39,6 +39,45 @@ module {
 // CHECK: memref.store
 
 // -----
+func.func @test_cast(%arg0: !ptensor.ptensor<?xi64>) -> !dist.dtensor<<?xi64>> {
+    %1 = "dist.cast"(%arg0) : (!ptensor.ptensor<?xi64>) -> (!dist.dtensor<<?xi64>>)
+    return %1 : !dist.dtensor<<?xi64>>
+}
+// CHECK-LABEL: func.func @test_cast(%arg0
+// CHECK: [[C0:%.*]] = arith.constant 0 : index
+// CHECK: [[C1:%.*]] = arith.constant 1 : index
+// CHECK: [[A0:%.*]] = memref.alloc()
+// CHECK: [[C2:%.*]] = arith.constant 0 : index
+// CHECK: memref.store
+// CHECK: [[A1:%.*]] = memref.alloc() {alignment = 8 : i64} : memref<1xindex>
+// CHECK: [[C3:%.*]] = arith.constant 0 : index
+// CHECK: memref.store
+// CHECK: return %arg0, [[C0]], [[C1]], [[A0]], [[A1]] : !ptensor.ptensor<?xi64>, index, index, memref<1xindex>, memref<1xindex>
+
+func.func @test_cast2(%arg0: i64, %arg1: i64, %arg2: index) -> !dist.dtensor<<?xi64>> {
+    %c1 = arith.constant 1 : index
+    %c2 = arith.constant 2 : index
+    %l_offsets, %l_shape = "dist.local_partition"(%c2, %c2, %arg2) : (index, index, index) -> (index, index)
+    %17 = ptensor.linspace %arg0 %arg1 %arg2 false   : (i64, i64, index) -> !ptensor.ptensor<?xi64>
+    %18 = dist.init_dist_tensor %17 %c1 1 %arg2   offsets %l_offsets : !ptensor.ptensor<?xi64>, index, index, index to !dist.dtensor<<?xi64>>
+    %19 = "dist.cast"(%18) : (!dist.dtensor<<?xi64>>) -> !dist.dtensor<<?xi64>>
+    return %19 : !dist.dtensor<<?xi64>>
+}
+// CHECK-LABEL: func.func @test_cast2
+// CHECK: arith.addi
+// CHECK: arith.subi
+// CHECK: arith.divsi
+// CHECK: [[V0:%.*]] = arith.minsi %arg2
+// CHECK: arith.minsi
+// CHECK: ptensor.linspace
+// CHECK: [[V1:%.*]] = memref.alloc()
+// CHECK: memref.store %arg2, [[V1]]
+// CHECK: [[V2:%.*]] = memref.alloc()
+// CHECK: memref.store [[V0]], [[V2]]
+// CHECK: return
+// CHECK-SAME: , [[V1]], [[V2]] : !ptensor.ptensor<?xi64>, index, index, memref<1xindex>, memref<1xindex>
+
+// -----
 module {
     "dist.runtime_prototypes"() : () -> ()
     func.func @test_local_partition(%np : index, %prank: index, %shape: index) -> (index, index) {

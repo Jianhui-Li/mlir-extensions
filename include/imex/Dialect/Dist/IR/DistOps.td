@@ -132,6 +132,22 @@ def InitDistTensorOp : Dist_Op<"init_dist_tensor", [SameVariadicOperandSize, Pur
     ];
 }
 
+def CastOp : Dist_Op<"cast", [Pure]> {
+    let summary = "Cast a PTensor to DistTensor to a DistTensor or itself";
+    let arguments = (ins AnyType:$source);
+    let results = (outs Dist_Tensor);
+    let builders = [
+      OpBuilder<(ins "::mlir::Value":$source), [{
+        auto dtTyp = source.getType().dyn_cast<::imex::dist::DistTensorType>();
+        if(!dtTyp) {
+           dtTyp = ::imex::dist::DistTensorType::get($_builder.getContext(),
+                                                     source.getType().cast<::imex::ptensor::PTensorType>());
+        }
+        build($_builder, $_state, dtTyp, source);
+      }]>,
+    ];
+}
+
 def GlobalShapeOfOp : Dist_Op<"global_shape_of", [Pure]> {
     let summary = "Get global shape of distributed tensor.";
     let arguments = (ins AnyType:$d_tensor);

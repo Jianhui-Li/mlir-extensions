@@ -38,6 +38,13 @@ createDistTensor(const ::mlir::Location &loc, ::mlir::OpBuilder &builder,
                                                         gshape, loffsets);
 }
 
+// Create a cast to DistTensor
+inline ::mlir::Value createDistCast(const ::mlir::Location &loc,
+                                    ::mlir::OpBuilder &builder,
+                                    ::mlir::Value pt) {
+  return builder.create<::imex::dist::CastOp>(loc, pt);
+}
+
 // create operation returning global shape of DistTensor
 inline ::mlir::ValueRange createGlobalShapeOf(const ::mlir::Location &loc,
                                               ::mlir::OpBuilder &builder,

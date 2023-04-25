@@ -284,7 +284,7 @@ inline ::mlir::Value createMemRefFromElements(::mlir::OpBuilder &builder,
   auto mr = createAllocMR(builder, loc, elType, N);
   for (auto i = 0; i < N; ++i) {
     auto idx = createIndex(loc, builder, i);
-    (void)builder.create<::mlir::memref::StoreOp>(loc, elts[i], mr, idx);
+    (void)builder.createOrFold<::mlir::memref::StoreOp>(loc, elts[i], mr, idx);
   }
   return mr;
 }
@@ -298,7 +298,7 @@ inline auto createValuesFromMemRef(::mlir::OpBuilder &builder,
   ::mlir::SmallVector<::mlir::Value> vals(rank);
   for (auto i = 0; i < rank; ++i) {
     auto _i = createIndex(loc, builder, i);
-    vals[i] = builder.create<::mlir::memref::LoadOp>(loc, mr, _i).getResult();
+    vals[i] = builder.createOrFold<::mlir::memref::LoadOp>(loc, mr, _i);
   }
   return vals;
 }

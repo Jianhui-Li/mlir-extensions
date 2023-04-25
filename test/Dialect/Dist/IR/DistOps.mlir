@@ -35,6 +35,15 @@ func.func @test_init_dist_tensor(%pt: !ptensor.ptensor<?xi64>, %team: i64, %gsha
 // CHECK-NEXT: dist.init_dist_tensor
 
 // -----
+func.func @test_cast(%arg0: !ptensor.ptensor<?xi64>) -> !dist.dtensor<<?xi64>> {
+    %1 = "dist.cast"(%arg0) : (!ptensor.ptensor<?xi64>) -> (!dist.dtensor<<?xi64>>)
+    return %1 : !dist.dtensor<<?xi64>>
+}
+// CHECK-LABEL: func.func @test_cast(%arg0
+// CHECK: [[V0:%.*]] = "dist.cast"(%arg0)
+// CHECK: return [[V0]] : !dist.dtensor<<?xi64>>
+
+// -----
 func.func @test_extract_from_dist(%arg0: !dist.dtensor<<?xi64>>) -> index {
     %1 = "dist.global_shape_of"(%arg0) : (!dist.dtensor<<?xi64>>) -> index
     %2 = "dist.local_tensor_of"(%arg0) : (!dist.dtensor<<?xi64>>) -> !ptensor.ptensor<?xi64>
