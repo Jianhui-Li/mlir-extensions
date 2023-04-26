@@ -305,28 +305,33 @@ struct EWBinOpConverter
     auto rhs = op.getRhs();
     auto lhsDtTyp = lhs.getType().dyn_cast<::imex::dist::DistTensorType>();
     auto rhsDtTyp = rhs.getType().dyn_cast<::imex::dist::DistTensorType>();
+    auto lhsPtTyp =
+        lhsDtTyp ? lhsDtTyp.getPTensorType()
+                 : lhs.getType().dyn_cast<::imex::ptensor::PTensorType>();
+    auto rhsPtTyp =
+        rhsDtTyp ? rhsDtTyp.getPTensorType()
+                 : rhs.getType().dyn_cast<::imex::ptensor::PTensorType>();
     auto resDtTyp =
         op.getResult().getType().dyn_cast<::imex::dist::DistTensorType>();
     // return failure if wrong ops or not distributed
-    if (!lhsDtTyp || !rhsDtTyp || !resDtTyp) {
+    if (!(lhsDtTyp || rhsDtTyp) || !(lhsDtTyp || lhsPtTyp) ||
+        !(rhsDtTyp || rhsPtTyp) || !resDtTyp) {
       return ::mlir::failure();
     }
 
-    auto lhsPtTyp = lhsDtTyp.getPTensorType();
-    // auto rhsPtTyp = rhsDtTyp.getPTensorType();
-    auto resPtTyp = resDtTyp.getPTensorType();
-
     auto loc = op.getLoc();
     // local ewb operands
-    auto lLhs = createLocalTensorOf(loc, rewriter, lhs);
-    auto lRhs = createLocalTensorOf(loc, rewriter, rhs);
+    auto lLhs = lhsDtTyp ? createLocalTensorOf(loc, rewriter, lhs) : lhs;
+    auto lRhs = rhsDtTyp ? createLocalTensorOf(loc, rewriter, rhs) : rhs;
 
     // return type same as lhs for now
+    auto resPtTyp = resDtTyp.getPTensorType();
     auto ewbres = rewriter.create<::imex::ptensor::EWBinOp>(
         loc, resPtTyp, op.getOp(), lLhs, lRhs);
 
     // get global shape, offsets and team
     auto ref = resPtTyp.getRank() == lhsPtTyp.getRank() ? lhs : rhs;
+    assert(ref.getType().isa<::imex::dist::DistTensorType>());
     auto team = createTeamOf(loc, rewriter, ref);
     auto gShape = createGlobalShapeOf(loc, rewriter, ref);
     auto lPart = createLocalPartition(loc, rewriter, ref, team, gShape);

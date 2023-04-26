@@ -333,19 +333,25 @@ struct DistEWBinOpRWP : public RecOpRewritePattern<::imex::ptensor::EWBinOp> {
                   ::mlir::PatternRewriter &rewriter) const override {
 
     // get input and type
-    auto lhsDTTyp =
-        op.getLhs().getType().dyn_cast<::imex::dist::DistTensorType>();
-    auto rhsDTTyp =
-        op.getRhs().getType().dyn_cast<::imex::dist::DistTensorType>();
-    auto outDTTyp =
+
+    auto lhs = op.getLhs();
+    auto rhs = op.getRhs();
+    auto lhsDtTyp = lhs.getType().dyn_cast<::imex::dist::DistTensorType>();
+    auto rhsDtTyp = rhs.getType().dyn_cast<::imex::dist::DistTensorType>();
+    auto lhsPtTyp =
+        lhsDtTyp ? lhsDtTyp.getPTensorType()
+                 : lhs.getType().dyn_cast<::imex::ptensor::PTensorType>();
+    auto rhsPtTyp =
+        rhsDtTyp ? rhsDtTyp.getPTensorType()
+                 : rhs.getType().dyn_cast<::imex::ptensor::PTensorType>();
+    auto outDtTyp =
         op.getResult().getType().dyn_cast<::imex::dist::DistTensorType>();
-    auto outPTTyp =
+    auto outPtTyp =
         op.getResult().getType().dyn_cast<::imex::ptensor::PTensorType>();
 
-    if (((!lhsDTTyp || !rhsDTTyp) && outPTTyp) ||
-        outDTTyp) { //} || (op->hasOneUse() &&
-                    // op->user_begin()->getName().getStringRef() ==
-                    //"dist.init_dist_tensor")) {
+    // FIXME we need something better than this simple transform for mixed
+    // dist/non-dist ewbinops
+    if (((!lhsDtTyp || !rhsDtTyp) && outPtTyp) || outDtTyp) {
       return ::mlir::failure();
     }
 
@@ -353,24 +359,22 @@ struct DistEWBinOpRWP : public RecOpRewritePattern<::imex::ptensor::EWBinOp> {
 
     // Repartition if necessary
     // FIXME: this breaks with dim-sizes==1, even if statically known
-    auto lhs = op.getLhs();
-    auto rhs = op.getRhs();
     auto rbLhs =
-        lhsDTTyp.getPTensorType().getRank() == 0
+        lhsPtTyp.getRank() == 0
             ? lhs
             : createRePartition(loc, rewriter, lhs); //, tOffs, tSizes);
     auto rbRhs =
         rhs == lhs
             ? rbLhs
-            : (rhsDTTyp.getPTensorType().getRank() == 0
+            : (rhsPtTyp.getRank() == 0
                    ? rhs
                    : createRePartition(loc, rewriter, rhs)); //, tOffs, tSizes);
 
     // replace with dist version of ewbinop
-    auto vDTTYp =
-        ::imex::dist::DistTensorType::get(rewriter.getContext(), outPTTyp);
+    auto vDtTYp =
+        ::imex::dist::DistTensorType::get(rewriter.getContext(), outPtTyp);
     rewriter.replaceOpWithNewOp<::imex::ptensor::EWBinOp>(
-        op, vDTTYp, op.getOp(), rbLhs, rbRhs);
+        op, vDtTYp, op.getOp(), rbLhs, rbRhs);
 
     return ::mlir::success();
   }
