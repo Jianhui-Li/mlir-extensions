@@ -323,7 +323,7 @@ def LocalBoundingBoxOp : Dist_Op<"local_bounding_box", [AttrSizedOperandSegments
     ];
 }
 
-def RePartitionOp : Dist_Op<"repartition", [AttrSizedOperandSegments, Pure]> {
+def RePartitionOp : Dist_Op<"repartition", [SameVariadicOperandSize, Pure]> {
     let summary = "Repartition a tensor so that each process hold data locally needed by given views.";
     let description = [{
         Creates a new DistTensor by repartitioning the input tensor. It is assumed to be a collective call

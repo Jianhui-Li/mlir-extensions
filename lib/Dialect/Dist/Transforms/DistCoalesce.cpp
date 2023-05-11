@@ -93,13 +93,16 @@ struct DistCoalescePass : public ::imex::DistCoalesceBase<DistCoalescePass> {
       auto pt = op.getPTensor();
       if (isDefByAnyOf<::imex::ptensor::CreateOp, ::imex::ptensor::LinSpaceOp,
                        ::imex::ptensor::EWBinOp, ::imex::ptensor::EWUnyOp,
-                       ::imex::ptensor::ReductionOp>(pt)) {
+                       ::imex::ptensor::ReductionOp,
+                       ::imex::ptensor::ReshapeOp>(pt)) {
         return op;
       }
       return getBase(pt);
     } else if (auto op = val.getDefiningOp<::imex::ptensor::EWBinOp>()) {
       return op;
     } else if (auto op = val.getDefiningOp<::imex::ptensor::EWUnyOp>()) {
+      return op;
+    } else if (auto op = val.getDefiningOp<::imex::ptensor::ReshapeOp>()) {
       return op;
     } else if (auto op = val.getDefiningOp<::imex::dist::SubviewOp>()) {
       return getBase(op.getSource());

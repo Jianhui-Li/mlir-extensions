@@ -26,6 +26,7 @@
 
 #include <mlir/Dialect/Arith/IR/Arith.h>
 #include <mlir/Dialect/Bufferization/IR/Bufferization.h>
+#include <mlir/Dialect/ControlFlow/IR/ControlFlowOps.h>
 #include <mlir/Dialect/Func/IR/FuncOps.h>
 #include <mlir/Dialect/Func/Transforms/DecomposeCallGraphTypes.h>
 #include <mlir/Dialect/Func/Transforms/FuncConversions.h>
@@ -33,6 +34,7 @@
 #include <mlir/Dialect/Linalg/Utils/Utils.h>
 #include <mlir/Dialect/MemRef/IR/MemRef.h>
 #include <mlir/Dialect/SCF/IR/SCF.h>
+#include <mlir/Dialect/SCF/Transforms/Transforms.h>
 #include <mlir/Dialect/Tensor/IR/Tensor.h>
 #include <mlir/IR/BuiltinOps.h>
 
@@ -283,7 +285,189 @@ struct InsertSliceOpConverter
   }
 };
 
-/// Convert a global dist::EWBinOp to ptensor::EWBinOp on the local data.
+/// return a Vector with all arguments needed for a call to idtr's repartition
+/// only the output memref and team need to be added
+static ::mlir::SmallVector<::mlir::Value, 12>
+getArgsForRepartition(::mlir::Location loc, ::mlir::OpBuilder &builder,
+                      const ::mlir::ValueRange &gShape,
+                      const ::mlir::Value &src,
+                      const ::mlir::ValueRange &nShape,
+                      ::mlir::ValueRange tOffs, ::mlir::ValueRange tSizes) {
+  // prepare src args to function call
+  auto srcPtTyp =
+      src.getType().dyn_cast<::imex::dist::DistTensorType>().getPTensorType();
+  auto srcRankV = createIndex(loc, builder, srcPtTyp.getRank());
+  auto gShapePtr = createExtractPtrFromMemRefFromValues(builder, loc, gShape);
+  auto bMRTyp = srcPtTyp.getMemRefType();
+  auto dtype = createDType(loc, builder, bMRTyp);
+  auto lSrc = createLocalTensorOf(loc, builder, src);
+  auto lDataPtr = builder.create<::imex::ptensor::ExtractRawPtrOp>(loc, lSrc);
+  auto lOffs = createLocalOffsetsOf(loc, builder, src);
+  auto lOffsPtr = createExtractPtrFromMemRefFromValues(builder, loc, lOffs);
+  auto bTensor = builder.create<::imex::ptensor::ExtractTensorOp>(loc, lSrc);
+  auto bMRef =
+      builder.create<::mlir::bufferization::ToMemrefOp>(loc, bMRTyp, bTensor);
+  auto bMeta =
+      builder.create<::mlir::memref::ExtractStridedMetadataOp>(loc, bMRef);
+  auto lShapePtr =
+      createExtractPtrFromMemRefFromValues(builder, loc, bMeta.getSizes());
+  auto lStridesPtr =
+      createExtractPtrFromMemRefFromValues(builder, loc, bMeta.getStrides());
+
+  // prepare out args
+  auto outOffsPtr = createExtractPtrFromMemRefFromValues(builder, loc, tOffs);
+  auto outSzsPtr = createExtractPtrFromMemRefFromValues(builder, loc, tSizes);
+
+  if (nShape.size()) { // reshape
+    auto outRankV = createIndex(loc, builder, nShape.size());
+    auto nShapePtr = createExtractPtrFromMemRefFromValues(builder, loc, nShape);
+    return {srcRankV,    gShapePtr, dtype,     lDataPtr,   lOffsPtr, lShapePtr,
+            lStridesPtr, outRankV,  nShapePtr, outOffsPtr, outSzsPtr};
+  } else { // repartition
+    return {srcRankV,  gShapePtr,   dtype,      lDataPtr, lOffsPtr,
+            lShapePtr, lStridesPtr, outOffsPtr, outSzsPtr};
+  }
+}
+
+/// Convert a global ptensor::ReshapeOp on a DistTensor
+/// to ptensor::ReshapeOp on the local data.
+/// If needed, adds a repartition op.
+/// The local partition (e.g. a RankedTensor) is wrapped in a
+/// non-distributed PTensor and re-applied to ReshapeOp.
+/// op gets replaced with global DistTensor
+struct ReshapeOpConverter
+    : public ::mlir::OpConversionPattern<::imex::ptensor::ReshapeOp> {
+  using ::mlir::OpConversionPattern<
+      ::imex::ptensor::ReshapeOp>::OpConversionPattern;
+
+  /// Initialize the pattern.
+  void initialize() {
+    /// Signal that this pattern safely handles recursive application.
+    setHasBoundedRewriteRecursion();
+  }
+
+  ::mlir::LogicalResult
+  matchAndRewrite(::imex::ptensor::ReshapeOp op,
+                  ::imex::ptensor::ReshapeOp::Adaptor adaptor,
+                  ::mlir::ConversionPatternRewriter &rewriter) const override {
+
+    auto src = op.getSrc();
+    auto srcDtTyp = src.getType().dyn_cast<::imex::dist::DistTensorType>();
+    auto retDtTyp =
+        op.getResult().getType().dyn_cast<::imex::dist::DistTensorType>();
+    if (!(srcDtTyp && retDtTyp)) {
+      return ::mlir::failure();
+    }
+
+    auto loc = op.getLoc();
+    auto nShape = adaptor.getShape();
+    auto srcPtTyp = srcDtTyp.getPTensorType();
+    auto lSrc = createLocalTensorOf(loc, rewriter, src);
+    auto gShape = createGlobalShapeOf(loc, rewriter, src);
+    auto srcRank = srcPtTyp.getRank();
+    auto outRank = nShape.size();
+    auto elType = srcPtTyp.getElementType();
+
+    // compute old chunk size per element in first dim
+    auto nChunkSz = easyIdx(loc, rewriter, 1);
+    auto lChunkSz = nChunkSz;
+    auto lTnsr = rewriter.create<::imex::ptensor::ExtractTensorOp>(loc, lSrc);
+    for (int i = 1; i < srcRank; i++) {
+      lChunkSz =
+          lChunkSz *
+          easyIdx(loc, rewriter,
+                  ::mlir::linalg::createOrFoldDimOp(rewriter, loc, lTnsr, i));
+    }
+    auto lSz =
+        lChunkSz *
+        easyIdx(loc, rewriter,
+                ::mlir::linalg::createOrFoldDimOp(rewriter, loc, lTnsr, 0));
+
+    // compute new chunk size per element in first dim
+    for (size_t i = 1; i < outRank; i++) {
+      nChunkSz = nChunkSz * easyIdx(loc, rewriter, nShape[i]);
+    }
+
+    // Repartitioning is needed if any of the partitions' size is not a multiple
+    // of the new chunksize There might be opts possible to avoid allreduce, for
+    // now we just allreduce
+    auto localPossible = lSz % nChunkSz;
+    auto lpMR = createMemRefFromElements(rewriter, loc, rewriter.getIndexType(),
+                                         {localPossible.get()});
+    auto rOp = rewriter.getIntegerAttr(
+        rewriter.getIntegerType(sizeof(::imex::ptensor::SUM) * 8),
+        ::imex::ptensor::SUM);
+    auto gPossible = rewriter.create<::imex::dist::AllReduceOp>(
+        loc, lpMR.getType(), rOp, lpMR);
+    auto zero = easyIdx(loc, rewriter, 0);
+    auto gpSum = easyIdx(
+        loc, rewriter,
+        rewriter.create<::mlir::memref::LoadOp>(loc, gPossible, zero.get()));
+    auto needRepart = gpSum.sge(zero);
+
+    EasyVal<bool> canCopy(loc, rewriter, adaptor.getCopy().value_or(1) != 0);
+    EasyVal<bool> _false(loc, rewriter, false);
+    rewriter.create<::mlir::cf::AssertOp>(
+        loc, needRepart.eq(_false).lor(canCopy).get(),
+        "Given reshape operation requires repartitioning, cannot do without "
+        "coping.");
+
+    auto team = createTeamOf(loc, rewriter, src);
+    auto reshaped = rewriter.create<::mlir::scf::IfOp>(
+        loc, needRepart.get(),
+        [&](::mlir::OpBuilder &builder, ::mlir::Location loc) {
+          // get function args
+          auto lPart = createLocalPartition(loc, builder, {}, team, nShape);
+          ::mlir::SmallVector<::mlir::Value> tOffs(lPart.getLOffsets());
+          auto tSizes = lPart.getLShape();
+          auto args = getArgsForRepartition(loc, builder, gShape, src, nShape,
+                                            tOffs, tSizes);
+
+          // create output tensor with target size
+          auto outTnsr = rewriter.create<::imex::ptensor::CreateOp>(
+              loc, tSizes, ::imex::ptensor::fromMLIR(elType), nullptr, nullptr,
+              nullptr); // FIXME device
+          auto outPtr =
+              rewriter.create<::imex::ptensor::ExtractRawPtrOp>(loc, outTnsr);
+
+          args.emplace_back(outPtr);
+          args.emplace_back(team);
+
+          // finally call the idt runtime
+          auto fun = rewriter.getStringAttr("_idtr_reshape");
+          (void)rewriter.create<::mlir::func::CallOp>(
+              loc, fun, ::mlir::TypeRange(), args);
+          tOffs.emplace_back(outTnsr.getResult());
+          builder.create<::mlir::scf::YieldOp>(loc, tOffs);
+        },
+
+        // else: no global reshape needed
+        [&](::mlir::OpBuilder &builder, ::mlir::Location loc) {
+          // we only have to adjust the local shape
+          auto lOffs = createLocalOffsetsOf(loc, builder, src);
+          ::mlir::SmallVector<::mlir::Value> tOffs(nShape.size(), zero.get());
+          tOffs[0] =
+              ((easyIdx(loc, builder, lOffs[0]) * lChunkSz) / nChunkSz).get();
+          ::mlir::SmallVector<::mlir::Value> lShape(nShape);
+          lShape[0] = (lSz / nChunkSz).get();
+          auto res = rewriter.create<::imex::ptensor::ReshapeOp>(
+              loc, retDtTyp.getPTensorType(), lSrc, lShape,
+              adaptor.getCopyAttr());
+          tOffs.emplace_back(res.getResult());
+          builder.create<::mlir::scf::YieldOp>(loc, tOffs);
+        }); // IfOp
+
+    auto tnsr = reshaped.getResults().back();
+    ::mlir::SmallVector<::mlir::Value> lOffs(reshaped.getResults());
+    lOffs.pop_back();
+    rewriter.replaceOp(
+        op, createDistTensor(loc, rewriter, tnsr, true, nShape, lOffs, team));
+
+    return ::mlir::success();
+  }
+};
+
+/// Convert a global ptensor::EWBinOp to ptensor::EWBinOp on the local data.
 /// Assumes that the partitioning of the inputs are properly aligned.
 struct EWBinOpConverter
     : public ::mlir::OpConversionPattern<::imex::ptensor::EWBinOp> {
@@ -425,9 +609,20 @@ struct RuntimePrototypesOpConverter
     requireFunc(loc, rewriter, module, "_idtr_reduce_all",
                 {indexType, indexType, indexType, indexType, dtypeType, opType},
                 {});
+    requireFunc(loc, rewriter, module, "_idtr_reshape",
+                // rank, gShapePtr, dtype,
+                // lDataPtr, lOffsPtr, lShapePtr, lStridesPtr,
+                // nRank, nShapePtr, offsPtr, szsPtr,
+                // outptr, team
+                {rankType, indexType, dtypeType, indexType, indexType,
+                 indexType, indexType, rankType, indexType, indexType,
+                 indexType, indexType, indexType},
+                {});
     requireFunc(loc, rewriter, module, "_idtr_repartition",
-                // rank, gShapePtr, dtype, lDataPtr, lOffsPtr, lShapePtr,
-                // lStridesPtr, offsPtr, szsPtr, outPtr, team
+                // rank, gShapePtr, dtype,
+                // lDataPtr, lOffsPtr, lShapePtr, lStridesPtr,
+                // offsPtr, szsPtr,
+                // outptr, team
                 {rankType, indexType, dtypeType, indexType, indexType,
                  indexType, indexType, indexType, indexType, indexType,
                  indexType},
@@ -718,7 +913,7 @@ struct LocalPartitionOpConverter
     // store in result range
     ::mlir::SmallVector<::mlir::Value> res(2 * rank, zero.get());
     res[0] = lOff.get();
-    res[rank] = lSz.get();
+    res[rank] = lSz.max(zero).get();
     for (int64_t i = 1; i < rank; ++i) {
       res[rank + i] = gShape[i];
     }
@@ -946,7 +1141,7 @@ struct LocalBoundingBoxOpConverter
 
     auto loc = op.getLoc();
     auto vOffs = op.getOffsets();
-    // auto vSizes = op.getSizes();
+    auto vSizes = op.getSizes();
     auto vStrides = op.getStrides();
     auto tOffs = op.getTargetOffsets();
     auto tSizes = op.getTargetSizes();
@@ -958,18 +1153,22 @@ struct LocalBoundingBoxOpConverter
 
     // min start index (among all views) for each dim followed by sizes
     ::mlir::SmallVector<::mlir::Value> oprnds(rank * 2);
+    auto one = easyIdx(loc, rewriter, 1);
 
     // for each dim and view compute min offset and max end
+    // return min offset and size (assuming stride 1 for the bb)
     for (size_t i = 0; i < rank; ++i) {
       ::mlir::SmallVector<EasyIdx> doffs;
       ::mlir::SmallVector<EasyIdx> dends;
       auto tOff = easyIdx(loc, rewriter, tOffs[i]);
       auto tSz = easyIdx(loc, rewriter, tSizes[i]);
       auto vOff = easyIdx(loc, rewriter, vOffs[i]);
-      auto st = easyIdx(loc, rewriter, vStrides[i]);
-      auto off = vOff + tOff;
+      auto vSz = easyIdx(loc, rewriter, vSizes[i]);
+      auto vSt = easyIdx(loc, rewriter, vStrides[i]);
+      auto vEnd = vOff + ((vSz - one) * vSt) + one;
+      auto off = vOff + tOff * vSt;
       auto bbOff = hasBB ? easyIdx(loc, rewriter, bbOffs[i]) : off;
-      auto end = off + (tSz * st);
+      auto end = vEnd.min(off + ((tSz - one) * vSt) + one);
       auto bbEnd = hasBB ? bbOff + easyIdx(loc, rewriter, bbSizes[i]) : end;
       bbOff = bbOff.min(off);
       auto bbSz = bbEnd.max(end) - bbOff;
@@ -1002,16 +1201,17 @@ struct RePartitionOpConverter
       return ::mlir::failure();
 
     auto loc = op.getLoc();
-    auto rank = dTTyp.getPTensorType().getRank();
-    auto elTyp = dTTyp.getPTensorType().getElementType();
+    auto outPTTyp = op.getResult()
+                        .getType()
+                        .cast<::imex::dist::DistTensorType>()
+                        .getPTensorType();
+    auto elTyp = outPTTyp.getElementType();
     ::mlir::ValueRange tOffs = op.getTargetOffsets();
     ::mlir::ValueRange tSizes = op.getTargetSizes();
 
     // Get required info from base
     auto team = createTeamOf(loc, rewriter, base);
     auto gShape = createGlobalShapeOf(loc, rewriter, base);
-    auto lOffs = createLocalOffsetsOf(loc, rewriter, base);
-    auto lTnsr = createLocalTensorOf(loc, rewriter, base);
 
     // default target partition is balanced
     if (tSizes.empty()) {
@@ -1021,43 +1221,24 @@ struct RePartitionOpConverter
     }
 
     // Now it's time to get memrefs their pointers for the function call
-    auto bMRTyp = dTTyp.getPTensorType().getMemRefType();
-    auto bTensor =
-        rewriter.create<::imex::ptensor::ExtractTensorOp>(loc, lTnsr);
-    auto bMRef = rewriter.create<::mlir::bufferization::ToMemrefOp>(loc, bMRTyp,
-                                                                    bTensor);
-    auto bMeta =
-        rewriter.create<::mlir::memref::ExtractStridedMetadataOp>(loc, bMRef);
-    auto lDataPtr =
-        rewriter.create<::imex::ptensor::ExtractRawPtrOp>(loc, lTnsr);
-    auto lShapePtr =
-        createExtractPtrFromMemRefFromValues(rewriter, loc, bMeta.getSizes());
-    auto lStridesPtr =
-        createExtractPtrFromMemRefFromValues(rewriter, loc, bMeta.getStrides());
-    auto gShapePtr =
-        createExtractPtrFromMemRefFromValues(rewriter, loc, gShape);
-    auto lOffsPtr = createExtractPtrFromMemRefFromValues(rewriter, loc, lOffs);
-
-    // make memrefs and get pointers for offset and sizes
-    auto offsPtr = createExtractPtrFromMemRefFromValues(rewriter, loc, tOffs);
-    auto szsPtr = createExtractPtrFromMemRefFromValues(rewriter, loc, tSizes);
+    auto args =
+        getArgsForRepartition(loc, rewriter, gShape, base, {}, tOffs, tSizes);
 
     // create output tensor with target size
     auto outTnsr = rewriter.create<::imex::ptensor::CreateOp>(
-        loc, tSizes, ::imex::ptensor::fromMLIR(elTyp), nullptr, nullptr,
+        loc, outPTTyp, tSizes, ::imex::ptensor::fromMLIR(elTyp), nullptr,
+        nullptr,
         nullptr); // FIXME device
     auto outPtr =
         rewriter.create<::imex::ptensor::ExtractRawPtrOp>(loc, outTnsr);
 
+    args.emplace_back(outPtr);
+    args.emplace_back(team);
+
     // call our runtime function to redistribute data across processes
-    auto rankV = createIndex(loc, rewriter, rank);
-    auto dtype = createDType(loc, rewriter, bMRTyp);
     auto fun = rewriter.getStringAttr("_idtr_repartition");
-    (void)rewriter.create<::mlir::func::CallOp>(
-        loc, fun, ::mlir::TypeRange(),
-        ::mlir::ValueRange{rankV, gShapePtr, dtype, lDataPtr, lOffsPtr,
-                           lShapePtr, lStridesPtr, offsPtr, szsPtr, outPtr,
-                           team});
+    (void)rewriter.create<::mlir::func::CallOp>(loc, fun, ::mlir::TypeRange(),
+                                                args);
 
     // init dist tensor
     rewriter.replaceOp(op, createDistTensor(loc, rewriter, outTnsr, true,
@@ -1157,7 +1338,7 @@ struct ConvertDistToStandardPass
     target.addLegalDialect<
         ::mlir::linalg::LinalgDialect, ::mlir::arith::ArithDialect,
         ::imex::ptensor::PTensorDialect, ::mlir::tensor::TensorDialect,
-        ::mlir::memref::MemRefDialect, ::mlir::scf::SCFDialect,
+        ::mlir::memref::MemRefDialect, ::mlir::cf::ControlFlowDialect,
         ::mlir::bufferization::BufferizationDialect>();
     target.addLegalOp<::mlir::UnrealizedConversionCastOp>(); // FIXME
 
@@ -1171,22 +1352,18 @@ struct ConvertDistToStandardPass
         [&](::mlir::func::ReturnOp op) {
           return typeConverter.isLegal(op.getOperandTypes());
         });
-    target.addDynamicallyLegalOp<mlir::func::CallOp>(
-        [&](mlir::func::CallOp op) { return typeConverter.isLegal(op); });
-
-    target.addDynamicallyLegalOp<::imex::ptensor::EWBinOp>(
-        [&](::imex::ptensor::EWBinOp op) { return typeConverter.isLegal(op); });
-
-    target.addDynamicallyLegalOp<::imex::ptensor::EWUnyOp>(
-        [&](::imex::ptensor::EWUnyOp op) { return typeConverter.isLegal(op); });
+    target.addDynamicallyLegalOp<
+        ::mlir::func::CallOp, ::imex::ptensor::ReshapeOp,
+        ::imex::ptensor::EWBinOp, ::imex::ptensor::EWUnyOp>(
+        [&](::mlir::Operation *op) { return typeConverter.isLegal(op); });
 
     // All the dist conversion patterns/rewriter
     ::mlir::RewritePatternSet patterns(&ctxt);
     patterns.insert<
         InsertSliceOpConverter, SubviewOpConverter, EWBinOpConverter,
         EWUnyOpConverter, LocalBoundingBoxOpConverter, RePartitionOpConverter,
-        RuntimePrototypesOpConverter, NProcsOpConverter, PRankOpConverter,
-        InitDistTensorOpConverter, LocalPartitionOpConverter,
+        ReshapeOpConverter, RuntimePrototypesOpConverter, NProcsOpConverter,
+        PRankOpConverter, InitDistTensorOpConverter, LocalPartitionOpConverter,
         LocalOffsetForTargetSliceOpConverter, LocalTargetOfSliceOpConverter,
         GlobalShapeOfOpConverter, IsBalancedOpConverter, CastOpConverter,
         LocalTensorOfOpConverter, LocalOffsetsOfOpConverter, TeamOfOpConverter,
@@ -1195,6 +1372,9 @@ struct ConvertDistToStandardPass
     // converters/materializations
     populateDecomposeCallGraphTypesPatterns(&ctxt, typeConverter, decomposer,
                                             patterns);
+
+    mlir::scf::populateSCFStructuralTypeConversionsAndLegality(
+        typeConverter, patterns, target);
 
     if (::mlir::failed(::mlir::applyPartialConversion(getOperation(), target,
                                                       ::std::move(patterns)))) {

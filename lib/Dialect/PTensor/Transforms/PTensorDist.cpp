@@ -318,6 +318,32 @@ struct DistCreateOpRWP : public RecOpRewritePattern<::imex::ptensor::CreateOp> {
   }
 };
 
+/// Rewriting ::imex::ptensor::ReshapeOp to get a distributed ReshapeOp if
+/// applicable.
+struct DistReshapeOpRWP
+    : public RecOpRewritePattern<::imex::ptensor::ReshapeOp> {
+  using RecOpRewritePattern::RecOpRewritePattern;
+
+  ::mlir::LogicalResult
+  matchAndRewrite(::imex::ptensor::ReshapeOp op,
+                  ::mlir::PatternRewriter &rewriter) const override {
+    auto src = op.getSrc();
+    // do not trigger a second conversion
+    if (!src.getType().isa<::imex::dist::DistTensorType>() ||
+        op.getResult().getType().isa<::imex::dist::DistTensorType>()) {
+      return ::mlir::failure();
+    }
+
+    auto retDtTyp = ::imex::dist::DistTensorType::get(
+        rewriter.getContext(),
+        op.getType().cast<::imex::ptensor::PTensorType>());
+    rewriter.replaceOpWithNewOp<::imex::ptensor::ReshapeOp>(
+        op, retDtTyp, src, op.getShape(), op.getCopyAttr());
+
+    return ::mlir::success();
+  }
+};
+
 /// Rewrite ::imex::ptensor::EWBinOp to get a distributed ewbinop
 /// if operands are distributed.
 /// Repartitions input tensors as needed.
@@ -484,9 +510,9 @@ struct PTensorDistPass : public ::imex::PTensorDistBase<PTensorDistPass> {
 
     ::mlir::FrozenRewritePatternSet patterns;
     insertPatterns<DistLinSpaceOpRWP, DistCreateOpRWP, DistEWBinOpRWP,
-                   DistEWUnyOpRWP, DistReductionOpRWP, DistExtractTensorOpRWP,
-                   DistSubviewOpRWP, DistInsertSliceOpRWP>(getContext(),
-                                                           patterns);
+                   DistReshapeOpRWP, DistEWUnyOpRWP, DistReductionOpRWP,
+                   DistExtractTensorOpRWP, DistSubviewOpRWP,
+                   DistInsertSliceOpRWP>(getContext(), patterns);
     (void)::mlir::applyPatternsAndFoldGreedily(this->getOperation(), patterns);
   }
 };

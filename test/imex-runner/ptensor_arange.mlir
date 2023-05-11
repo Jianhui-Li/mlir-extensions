@@ -9,8 +9,14 @@ module {
         %c2 = arith.constant 2 : i64
         %c5 = arith.constant 5 : i64
         %c10 = arith.constant 10 : i64
+        %i0 = arith.constant 0 : index
         %i1 = arith.constant 1 : index
         %i2 = arith.constant 2 : index
+        %i3 = arith.constant 3 : index
+        %i4 = arith.constant 4 : index
+        %i5 = arith.constant 5 : index
+        %i6 = arith.constant 6 : index
+        %i36 = arith.constant 36 : index
 
         %3 = ptensor.linspace %c0 %c10 %c5 false : (i64, i64, i64) -> !ptensor.ptensor<?xi64>
         %4 = builtin.unrealized_conversion_cast %3 : !ptensor.ptensor<?xi64> to tensor<?xi64>
@@ -70,6 +76,58 @@ module {
         // CHECK: Unranked Memref base@ = {{(0x)?[-9a-f]*}}
         // CHECK-SAME: rank = 0 offset = 0 sizes = [] strides = [] data =
         // CHECK-NEXT{LITERAL}: [80]
+
+        %60 = "ptensor.reshape"(%3, %i5, %i1) : (!ptensor.ptensor<?xi64>, index, index) -> !ptensor.ptensor<?x?xi64>
+        %64 = builtin.unrealized_conversion_cast %60 : !ptensor.ptensor<?x?xi64> to tensor<?x?xi64>
+        %65 = tensor.cast %64 : tensor<?x?xi64> to tensor<*xi64>
+        call @printMemrefI64(%65) : (tensor<*xi64>) -> ()
+        // CHECK: rank = 2 offset = 0 sizes = [5, 1] strides = [1, 1] data =
+        // CHECK-NEXT{LITERAL}: [[0],
+        // CHECK-NEXT{LITERAL}: [0],
+        // CHECK-NEXT{LITERAL}: [4],
+        // CHECK-NEXT{LITERAL}: [1],
+        // CHECK-NEXT{LITERAL}: [8]]
+
+        %s = ptensor.create %i1, %i5 value %c5 {dtype = 2 : i8} : (index, index, i64) -> !ptensor.ptensor<1x1xi64>
+        %70 = ptensor.linspace %i0 %i36 %i36 false : (index, index, index) -> !ptensor.ptensor<?xi64>
+        %71 = "ptensor.reshape"(%70, %i6, %i6) : (!ptensor.ptensor<?xi64>, index, index) -> !ptensor.ptensor<?x?xi64>
+        %75 = "ptensor.reshape"(%71, %i4, %i3, %i3) {copy = 1 : i1} : (!ptensor.ptensor<?x?xi64>, index, index, index) -> !ptensor.ptensor<?x?x?xi64>
+        %76 = "ptensor.reshape"(%71, %i36) {copy = 0 : i1} : (!ptensor.ptensor<?x?xi64>, index) -> !ptensor.ptensor<?xi64>
+        // we modify the first reshaped, the second shouldnot change, the third should
+        ptensor.insert_slice %s into %71[%i1, %i1] [%i1, %i5] [%i5, %i1] : !ptensor.ptensor<1x1xi64> into !ptensor.ptensor<?x?xi64>
+        %72 = builtin.unrealized_conversion_cast %71 : !ptensor.ptensor<?x?xi64> to tensor<?x?xi64>
+        %73 = tensor.cast %72 : tensor<?x?xi64> to tensor<*xi64>
+        call @printMemrefI64(%73) : (tensor<*xi64>) -> ()
+        // CHECK-NEXT{LITERAL}: rank = 2 offset = 0 sizes = [6, 6] strides = [6, 1] data =
+        // CHECK-NEXT{LITERAL}: [[0,   1,   2,   3,   4,   5],
+        // CHECK-NEXT{LITERAL}:  [6,   5,   5,   5,   5,   5],
+        // CHECK-NEXT{LITERAL}:  [12,   13,   14,   15,   16,   17],
+        // CHECK-NEXT{LITERAL}:  [18,   19,   20,   21,   22,   23],
+        // CHECK-NEXT{LITERAL}:  [24,   25,   26,   27,   28,   29],
+        // CHECK-NEXT{LITERAL}:  [30,   31,   32,   33,   34,   35]]
+
+        %78 = builtin.unrealized_conversion_cast %75 : !ptensor.ptensor<?x?x?xi64> to tensor<?x?x?xi64>
+        %79 = tensor.cast %78 : tensor<?x?x?xi64> to tensor<*xi64>
+        call @printMemrefI64(%79) : (tensor<*xi64>) -> ()
+        // CHECK-NEXT{LITERAL}: rank = 3 offset = 0 sizes = [4, 3, 3] strides = [9, 3, 1] data =
+        // CHECK-NEXT{LITERAL}: [[[0,    1,    2],
+        // CHECK-NEXT{LITERAL}:   [3,    4,    5],
+        // CHECK-NEXT{LITERAL}:   [6,    7,    8]],
+        // CHECK-NEXT{LITERAL}:  [[9,    10,    11],
+        // CHECK-NEXT{LITERAL}:   [12,    13,    14],
+        // CHECK-NEXT{LITERAL}:   [15,    16,    17]],
+        // CHECK-NEXT{LITERAL}:  [[18,    19,    20],
+        // CHECK-NEXT{LITERAL}:   [21,    22,    23],
+        // CHECK-NEXT{LITERAL}:   [24,    25,    26]],
+        // CHECK-NEXT{LITERAL}:  [[27,    28,    29],
+        // CHECK-NEXT{LITERAL}:   [30,    31,    32],
+        // CHECK-NEXT{LITERAL}:   [33,    34,    35]]]
+
+        %80 = builtin.unrealized_conversion_cast %76 : !ptensor.ptensor<?xi64> to tensor<?xi64>
+        %81 = tensor.cast %80 : tensor<?xi64> to tensor<*xi64>
+        call @printMemrefI64(%81) : (tensor<*xi64>) -> ()
+        // CHECK{LITERAL}: rank = 1 offset = 0 sizes = [36] strides = [1] data =
+        // CHECK-NEXT{LITERAL}: [0,  1,  2,  3,  4,  5,  6,  5,  5,  5,  5,  5,  12,  13,  14,  15,  16,  17,  18,  19,  20,  21,  22,  23,  24,  25,  26,  27,  28,  29,  30,  31,  32,  33,  34,  35]
 
         return
     }

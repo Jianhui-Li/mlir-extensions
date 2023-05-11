@@ -181,6 +181,34 @@ template <typename T> struct EasyVal {
     return easyCompare(::mlir::arith::CmpIPredicate::uge, r);
   }
 
+  /// logical XOR
+  template <typename X = T, typename std::enable_if<
+                                std::is_same<X, bool>::value>::type * = nullptr>
+  EasyVal<bool> lxor(EasyVal<X> const &r) const {
+    static_assert(std::is_same_v<T, bool>);
+    return {*_loc, *_builder,
+            _builder->create<::mlir::arith::XOrIOp>(*_loc, _value, r.get())};
+    // return EasyVal<bool>(*_loc, *_builder, true) - ((*this) * r);
+  }
+
+  /// logical or
+  template <typename X = T, typename std::enable_if<
+                                std::is_same<X, bool>::value>::type * = nullptr>
+  EasyVal<bool> lor(EasyVal<X> const &r) const {
+    static_assert(std::is_same_v<T, bool>);
+    return {*_loc, *_builder,
+            _builder->create<::mlir::arith::OrIOp>(*_loc, _value, r.get())};
+  }
+
+  /// logical and
+  template <typename X = T, typename std::enable_if<
+                                std::is_same<X, bool>::value>::type * = nullptr>
+  EasyVal<bool> land(EasyVal<X> const &r) const {
+    static_assert(std::is_same_v<T, bool>);
+    return {*_loc, *_builder,
+            _builder->create<::mlir::arith::AndIOp>(*_loc, _value, r.get())};
+  }
+
   /// select lhs or rhs dependent on comparison
   template <
       typename LHS, typename RHS, typename X = T,

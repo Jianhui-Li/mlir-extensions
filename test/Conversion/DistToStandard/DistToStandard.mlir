@@ -11,6 +11,7 @@ module {
 // CHECK-LABEL: func.func private @_idtr_nprocs(index) -> index
 // CHECK-LABEL: func.func private @_idtr_prank(index) -> index
 // CHECK-LABEL: func.func private @_idtr_reduce_all(index, index, index, index, i32, i32)
+// CHECK-LABEL: func.func private @_idtr_reshape(index, index, i32, index, index, index, index, index, index, index, index, index, index)
 // CHECK-LABEL: func.func private @_idtr_repartition(index, index, i32, index, index, index, index, index, index, index, index)
 // CHECK-LABEL: func.func @test_nprocs(%arg0: index) -> index {
 // CHECK: @_idtr_nprocs(%arg0)
@@ -156,3 +157,25 @@ module {
 // CHECK: memref.store
 // CHECK: memref.store
 // CHECK: return
+
+// -----
+module {
+    "dist.runtime_prototypes"() : () -> ()
+    func.func @test_reshape(%arg0: !dist.dtensor<<?xi64>>) -> !dist.dtensor<<?x?xi64>> {
+        %c1 = arith.constant 1 : index
+        %c33 = arith.constant 3 : index
+        %0 = "ptensor.reshape"(%arg0, %c1, %c33) : (!dist.dtensor<<?xi64>>, index, index) -> !dist.dtensor<<?x?xi64>>
+        return %0 : !dist.dtensor<<?x?xi64>>
+    }
+}
+// CHECK-LABEL: @test_reshape
+// CHECK: scf.if
+// CHECK: func.call @_idtr_nprocs
+// CHECK: func.call @_idtr_prank
+// CHECK: func.call @_idtr_reshape
+// CHECK: } else {
+// CHECK: arith.divsi
+// CHECK: "ptensor.reshape"(%arg0
+// CHECK: }
+// CHECK: return
+// CHECK-SAME: : !ptensor.ptensor<?x?xi64>, index, index, memref<2xindex>, memref<2xindex>

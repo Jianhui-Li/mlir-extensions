@@ -109,8 +109,8 @@ createRePartition(const ::mlir::Location &loc, ::mlir::OpBuilder &builder,
 }
 
 inline auto createLocalPartition(const ::mlir::Location &loc,
-                                 ::mlir::OpBuilder &builder, ::mlir::Value dt,
-                                 ::mlir::Value team = {},
+                                 ::mlir::OpBuilder &builder,
+                                 ::mlir::Value dt = {}, ::mlir::Value team = {},
                                  ::mlir::ValueRange gShape = {}) {
   if (!team)
     team = createTeamOf(loc, builder, dt);

@@ -52,6 +52,19 @@ func.func @test_create2(%arg0: index, %arg1: index, %arg2: index, %arg3: i64) ->
 // CHECK: ptensor.create %arg0, %arg1, %arg2 value %arg3 device %arg3 team %arg3 {dtype = 2 : i8} : (index, index, index, i64, i64, i64) -> !ptensor.ptensor<?x?x?xi64>
 
 // -----
+func.func @test_reshape(%arg0: index) -> !ptensor.ptensor<?x?xi64> {
+    %0 = ptensor.create %arg0 {dtype = 2 : i8} : (index) -> !ptensor.ptensor<?xi64>
+    %c0 = arith.constant 0 : index
+    %c3 = arith.constant 3 : index
+    %1 = "ptensor.reshape"(%0, %c0, %c3) : (!ptensor.ptensor<?xi64>, index, index) -> !ptensor.ptensor<?x?xi64>
+    return %1 : !ptensor.ptensor<?x?xi64>
+}
+// CHECK-LABEL: @test_reshape
+// CHECK: ptensor.create
+// CHECK: ptensor.reshape
+// CHECK-SAME: -> !ptensor.ptensor<?x?xi64>
+
+// -----
 func.func @test_ewbin(%arg0: !ptensor.ptensor<?xi64>) -> !ptensor.ptensor<?xi64> {
     %0 = "ptensor.ewbin"(%arg0, %arg0) {op = 0 : i32} : (!ptensor.ptensor<?xi64>, !ptensor.ptensor<?xi64>) -> !ptensor.ptensor<?xi64>
     return %0 : !ptensor.ptensor<?xi64>

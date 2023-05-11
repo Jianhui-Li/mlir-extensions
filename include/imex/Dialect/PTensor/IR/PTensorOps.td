@@ -528,6 +528,17 @@ def CreateOp : PTensor_Op<"create", [AttrSizedOperandSegments]> {
     }];
 }
 
+def ReshapeOp : PTensor_Op<"reshape", []> {
+    let summary = "Reshapes an array without changing its data.";
+    let description = [{
+        Reshapes an array without changing its data. Memory is re-used as requested.
+        See Array API.
+    }];
+
+    let arguments = (ins AnyType:$src, Variadic<Index>:$shape, OptionalAttr<I1Attr>:$copy);
+    let results = (outs AnyType);
+}
+
 def EWBinOp : PTensor_Op<"ewbin", []> {
     let summary = "Apply elementwise binary operation";
     let description = [{

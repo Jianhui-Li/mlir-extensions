@@ -65,9 +65,11 @@ inline DType fromMLIR(const ::mlir::Type &typ) {
     return F64;
   else if (typ.isF32())
     return F32;
-  else if (typ.isIntOrIndex()) {
+  else if (typ.isIndex())
+    return I64;
+  else if (typ.isIntOrIndexOrFloat()) {
     auto w = typ.getIntOrFloatBitWidth();
-    auto u = !typ.isIndex() && typ.isUnsignedInteger();
+    auto u = typ.isUnsignedInteger();
     switch (w) {
     case 64:
       return u ? U64 : I64;

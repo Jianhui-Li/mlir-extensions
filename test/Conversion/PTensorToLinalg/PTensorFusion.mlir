@@ -10,7 +10,7 @@ func.func @test_binop_fusion_arith(%arg0: !ptensor.ptensor<?xi64>, %arg1: !ptens
 }
 // CHECK-LABEL: @test_binop_fusion_arith
 // CHECK-NEXT: arith.constant
-// CHECK-NEXT: tensor.dim
+// CHECK: memref.dim
 // CHECK-NEXT: tensor.empty
 // CHECK-NEXT: linalg.generic
 // CHECK-NEXT: bb
@@ -18,7 +18,7 @@ func.func @test_binop_fusion_arith(%arg0: !ptensor.ptensor<?xi64>, %arg1: !ptens
 // CHECK-NEXT: arith.muli
 // CHECK-NEXT: arith.addi
 // CHECK-NEXT: arith.muli
-// CHECK: return %{{[0-9]+}} : tensor<?xi64>
+// CHECK: return %{{[0-9]+}} : memref<?xi64, strided<[?], offset: ?>>
 
 // -----
 func.func @test_binop_fusion_tosa(%arg0: !ptensor.ptensor<?xi64>, %arg1: !ptensor.ptensor<?xi64>) -> !ptensor.ptensor<?xi64> {
@@ -30,7 +30,7 @@ func.func @test_binop_fusion_tosa(%arg0: !ptensor.ptensor<?xi64>, %arg1: !ptenso
 }
 // CHECK-LABEL: @test_binop_fusion_tosa
 // CHECK-NEXT: arith.constant
-// CHECK-NEXT: tensor.dim
+// CHECK: memref.dim
 // CHECK-NEXT: tensor.empty
 // CHECK-NEXT: linalg.generic
 // CHECK-NEXT: bb
@@ -38,7 +38,7 @@ func.func @test_binop_fusion_tosa(%arg0: !ptensor.ptensor<?xi64>, %arg1: !ptenso
 // CHECK-NEXT: arith.andi
 // CHECK-NEXT: arith.ori
 // CHECK-NEXT: arith.andi
-// CHECK: return %{{[0-9]+}} : tensor<?xi64>
+// CHECK: return %{{[0-9]+}} : memref<?xi64, strided<[?], offset: ?>>
 
 func.func @test_binop_fusion_bcast(%arg0: !ptensor.ptensor<?x?xi64>, %arg1: !ptensor.ptensor<i64>) -> !ptensor.ptensor<?x?xi64> {
     %0 ="ptensor.ewbin"(%arg0, %arg1) {op = 0 : i32} : (!ptensor.ptensor<?x?xi64>, !ptensor.ptensor<i64>) -> !ptensor.ptensor<?x?xi64>
@@ -50,8 +50,8 @@ func.func @test_binop_fusion_bcast(%arg0: !ptensor.ptensor<?x?xi64>, %arg1: !pte
 // CHECK-LABEL: @test_binop_fusion_bcast
 // CHECK-NEXT: arith.constant
 // CHECK-NEXT: arith.constant
-// CHECK-NEXT: tensor.dim
-// CHECK-NEXT: tensor.dim
+// CHECK: memref.dim
+// CHECK-NEXT: memref.dim
 // CHECK-NEXT: tensor.empty
 // CHECK-NEXT: linalg.generic
 // CHECK-NEXT: bb
@@ -59,7 +59,7 @@ func.func @test_binop_fusion_bcast(%arg0: !ptensor.ptensor<?x?xi64>, %arg1: !pte
 // CHECK-NEXT: arith.muli
 // CHECK-NEXT: arith.addi
 // CHECK-NEXT: arith.muli
-// CHECK: return %{{[0-9]+}} : tensor<?x?xi64>
+// CHECK: return %{{[0-9]+}} : memref<?x?xi64, strided<[?, ?], offset: ?>
 
 func.func @test_binop_fusion_bcast2(%arg0: !ptensor.ptensor<?xi64>, %arg1: !ptensor.ptensor<1xi64>) -> !ptensor.ptensor<?xi64> {
     %0 ="ptensor.ewbin"(%arg0, %arg1) {op = 0 : i32} : (!ptensor.ptensor<?xi64>, !ptensor.ptensor<1xi64>) -> !ptensor.ptensor<?xi64>
@@ -70,7 +70,7 @@ func.func @test_binop_fusion_bcast2(%arg0: !ptensor.ptensor<?xi64>, %arg1: !pten
 }
 // CHECK-LABEL: @test_binop_fusion_bcast2
 // CHECK-NEXT: arith.constant
-// CHECK-NEXT: tensor.dim
+// CHECK: memref.dim
 // CHECK-NEXT: tensor.empty
 // CHECK-NEXT: linalg.generic
 // CHECK-NEXT: bb
@@ -78,7 +78,7 @@ func.func @test_binop_fusion_bcast2(%arg0: !ptensor.ptensor<?xi64>, %arg1: !pten
 // CHECK-NEXT: arith.muli
 // CHECK-NEXT: arith.addi
 // CHECK-NEXT: arith.muli
-// CHECK: return %{{[0-9]+}} : tensor<?xi64>
+// CHECK: return %{{[0-9]+}} : memref<?xi64, strided<[?], offset: ?>>
 
 func.func @test_binop_fusion_bcast3(%arg0: !ptensor.ptensor<?xi64>, %arg1: !ptensor.ptensor<1x?xi64>) -> !ptensor.ptensor<?x?xi64> {
     %0 ="ptensor.ewbin"(%arg0, %arg1) {op = 0 : i32} : (!ptensor.ptensor<?xi64>, !ptensor.ptensor<1x?xi64>) -> !ptensor.ptensor<?x?xi64>
@@ -89,12 +89,12 @@ func.func @test_binop_fusion_bcast3(%arg0: !ptensor.ptensor<?xi64>, %arg1: !pten
 // CHECK-LABEL: @test_binop_fusion_bcast3
 // CHECK-NEXT: arith.constant
 // CHECK-NEXT: arith.constant
-// CHECK-NEXT: tensor.dim
-// CHECK-NEXT: tensor.dim
+// CHECK: memref.dim
+// CHECK-NEXT: memref.dim
 // CHECK-NEXT: tensor.empty
 // CHECK-NEXT: linalg.generic
 // CHECK-NEXT: bb
 // CHECK-NEXT: arith.addi
 // CHECK-NEXT: arith.muli
 // CHECK-NEXT: arith.addi
-// CHECK: return %{{[0-9]+}} : tensor<?x?xi64>
+// CHECK: return %{{[0-9]+}} : memref<?x?xi64, strided<[?, ?], offset: ?>>
