@@ -285,14 +285,13 @@ struct InsertSliceOpConverter
   }
 };
 
-/// return a Vector with all arguments needed for a call to idtr's repartition
+/// return a Vector with all arguments needed for a call to idtr's reshape
 /// only the output memref and team need to be added
 static ::mlir::SmallVector<::mlir::Value, 12>
-getArgsForRepartition(::mlir::Location loc, ::mlir::OpBuilder &builder,
-                      const ::mlir::ValueRange &gShape,
-                      const ::mlir::Value &src,
-                      const ::mlir::ValueRange &nShape,
-                      ::mlir::ValueRange tOffs, ::mlir::ValueRange tSizes) {
+getArgsForReshape(::mlir::Location loc, ::mlir::OpBuilder &builder,
+                  const ::mlir::ValueRange &gShape, const ::mlir::Value &src,
+                  const ::mlir::ValueRange &nShape, ::mlir::ValueRange tOffs,
+                  ::mlir::ValueRange tSizes) {
   // prepare src args to function call
   auto srcPtTyp =
       src.getType().dyn_cast<::imex::dist::DistTensorType>().getPTensorType();
@@ -420,8 +419,8 @@ struct ReshapeOpConverter
           auto lPart = createLocalPartition(loc, builder, {}, team, nShape);
           ::mlir::SmallVector<::mlir::Value> tOffs(lPart.getLOffsets());
           auto tSizes = lPart.getLShape();
-          auto args = getArgsForRepartition(loc, builder, gShape, src, nShape,
-                                            tOffs, tSizes);
+          auto args = getArgsForReshape(loc, builder, gShape, src, nShape,
+                                        tOffs, tSizes);
 
           // create output tensor with target size
           auto outTnsr = rewriter.create<::imex::ptensor::CreateOp>(
@@ -619,12 +618,10 @@ struct RuntimePrototypesOpConverter
                  indexType, indexType, indexType},
                 {});
     requireFunc(loc, rewriter, module, "_idtr_repartition",
-                // rank, gShapePtr, dtype,
-                // lDataPtr, lOffsPtr, lShapePtr, lStridesPtr,
-                // offsPtr, szsPtr,
-                // outptr, team
-                {rankType, indexType, dtypeType, indexType, indexType,
-                 indexType, indexType, indexType, indexType, indexType,
+                // rank, gShape, dtype, lDataPtr, lOffs, lShape,
+                // lStrides, offs, szs, outPtr, team
+                {rankType, IdxmrType, dtypeType, indexType, IdxmrType,
+                 IdxmrType, IdxmrType, IdxmrType, IdxmrType, indexType,
                  indexType},
                 {});
     requireFunc(loc, rewriter, module, "_idtr_extractslice",
@@ -1201,6 +1198,7 @@ struct RePartitionOpConverter
       return ::mlir::failure();
 
     auto loc = op.getLoc();
+    auto rank = dTTyp.getPTensorType().getRank();
     auto outPTTyp = op.getResult()
                         .getType()
                         .cast<::imex::dist::DistTensorType>()
@@ -1221,8 +1219,32 @@ struct RePartitionOpConverter
     }
 
     // Now it's time to get memrefs their pointers for the function call
-    auto args =
-        getArgsForRepartition(loc, rewriter, gShape, base, {}, tOffs, tSizes);
+    auto lTnsr = createLocalTensorOf(loc, rewriter, base);
+    auto lOffs = createLocalOffsetsOf(loc, rewriter, base);
+    auto bMRTyp = dTTyp.getPTensorType().getMemRefType();
+    auto bTensor =
+        rewriter.create<::imex::ptensor::ExtractTensorOp>(loc, lTnsr);
+    auto bMRef = rewriter.create<::mlir::bufferization::ToMemrefOp>(loc, bMRTyp,
+                                                                    bTensor);
+    auto bMeta =
+        rewriter.create<::mlir::memref::ExtractStridedMetadataOp>(loc, bMRef);
+    auto lDataPtr =
+        rewriter.create<::imex::ptensor::ExtractRawPtrOp>(loc, lTnsr);
+    auto indexType = rewriter.getIndexType();
+    auto lShapeMR = createUnrankedMemRefFromElements(rewriter, loc, indexType,
+                                                     bMeta.getSizes());
+    auto lStridesMR = createUnrankedMemRefFromElements(rewriter, loc, indexType,
+                                                       bMeta.getStrides());
+    auto gShapeMR =
+        createUnrankedMemRefFromElements(rewriter, loc, indexType, gShape);
+    auto lOffsMR =
+        createUnrankedMemRefFromElements(rewriter, loc, indexType, lOffs);
+
+    // make memrefs for offset and sizes
+    auto offsMR =
+        createUnrankedMemRefFromElements(rewriter, loc, indexType, tOffs);
+    auto szsMR =
+        createUnrankedMemRefFromElements(rewriter, loc, indexType, tSizes);
 
     // create output tensor with target size
     auto outTnsr = rewriter.create<::imex::ptensor::CreateOp>(
@@ -1232,13 +1254,14 @@ struct RePartitionOpConverter
     auto outPtr =
         rewriter.create<::imex::ptensor::ExtractRawPtrOp>(loc, outTnsr);
 
-    args.emplace_back(outPtr);
-    args.emplace_back(team);
-
     // call our runtime function to redistribute data across processes
     auto fun = rewriter.getStringAttr("_idtr_repartition");
-    (void)rewriter.create<::mlir::func::CallOp>(loc, fun, ::mlir::TypeRange(),
-                                                args);
+    auto rankV = createIndex(loc, rewriter, rank);
+    auto dtype = createDType(loc, rewriter, bMRTyp);
+    (void)rewriter.create<::mlir::func::CallOp>(
+        loc, fun, ::mlir::TypeRange(),
+        ::mlir::ValueRange{rankV, gShapeMR, dtype, lDataPtr, lOffsMR, lShapeMR,
+                           lStridesMR, offsMR, szsMR, outPtr, team});
 
     // init dist tensor
     rewriter.replaceOp(op, createDistTensor(loc, rewriter, outTnsr, true,

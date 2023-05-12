@@ -289,6 +289,17 @@ inline ::mlir::Value createMemRefFromElements(::mlir::OpBuilder &builder,
   return mr;
 }
 
+/// Create a 1d UnrankedMemRef from given elements and elType
+inline ::mlir::Value
+createUnrankedMemRefFromElements(::mlir::OpBuilder &builder,
+                                 ::mlir::Location loc, ::mlir::Type elType,
+                                 ::mlir::ValueRange elts) {
+  auto mr = createMemRefFromElements(builder, loc, elType, elts);
+  auto umrType = ::mlir::UnrankedMemRefType::get(elType, {});
+  auto umr = builder.create<::mlir::memref::CastOp>(loc, umrType, mr);
+  return umr;
+}
+
 /// @return members of given 1d memref as individual values
 inline auto createValuesFromMemRef(::mlir::OpBuilder &builder,
                                    ::mlir::Location loc, ::mlir::Value mr) {

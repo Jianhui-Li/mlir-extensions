@@ -12,7 +12,7 @@ module {
 // CHECK-LABEL: func.func private @_idtr_prank(index) -> index
 // CHECK-LABEL: func.func private @_idtr_reduce_all(index, index, index, index, i32, i32)
 // CHECK-LABEL: func.func private @_idtr_reshape(index, index, i32, index, index, index, index, index, index, index, index, index, index)
-// CHECK-LABEL: func.func private @_idtr_repartition(index, index, i32, index, index, index, index, index, index, index, index)
+// CHECK-LABEL: func.func private @_idtr_repartition(index, memref<*xindex>, i32, index, memref<*xindex>, memref<*xindex>, memref<*xindex>, memref<*xindex>, memref<*xindex>, index, index)
 // CHECK-LABEL: func.func @test_nprocs(%arg0: index) -> index {
 // CHECK: @_idtr_nprocs(%arg0)
 
@@ -147,10 +147,10 @@ module {
 }
 // CHECK-LABEL: @test_repartition(%arg0: !ptensor.ptensor<?x?xi64>, %arg1: index, %arg2: index, %arg3: memref<2xindex>, %arg4: memref<2xindex>) -> (!ptensor.ptensor<?x?xi64>, index, index, memref<2xindex>, memref<2xindex>) {
 // CHECK: ptensor.extract_raw_ptr
-// CHECK: memref.extract_aligned_pointer_as_index
-// CHECK: memref.extract_aligned_pointer_as_index
-// CHECK: memref.extract_aligned_pointer_as_index
-// CHECK: memref.extract_aligned_pointer_as_index
+// CHECK: memref.cast
+// CHECK: memref.cast
+// CHECK: memref.cast
+// CHECK: memref.cast
 // CHECK: call @_idtr_repartition
 // CHECK: memref.store
 // CHECK: memref.store
