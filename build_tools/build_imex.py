@@ -117,7 +117,8 @@ def _configure_llvm_build(
             #'-DLLVM_TARGETS_TO_BUILD="host"',
             "-DLLVM_ENABLE_ASSERTIONS=" + "ON" if enable_assertions else "OFF",
             "-DLLVM_ENABLE_RTTI=ON",
-            "-DLLVM_USE_LINKER=gold",
+            # "-DLLVM_USE_LINKER=gold",
+            "-DLLVM_ENABLE_LLD=ON"
             "-DLLVM_INSTALL_UTILS=ON",
             "-DCMAKE_INSTALL_PREFIX=" + os.path.abspath(mlir_install_prefix),
             os.path.abspath(llvm_src_dir + "/llvm"),

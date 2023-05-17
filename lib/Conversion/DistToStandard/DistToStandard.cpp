@@ -293,38 +293,45 @@ getArgsForReshape(::mlir::Location loc, ::mlir::OpBuilder &builder,
                   const ::mlir::ValueRange &nShape, ::mlir::ValueRange tOffs,
                   ::mlir::ValueRange tSizes) {
   // prepare src args to function call
+  auto idxType = builder.getIndexType();
   auto srcPtTyp =
       src.getType().dyn_cast<::imex::dist::DistTensorType>().getPTensorType();
-  auto srcRankV = createIndex(loc, builder, srcPtTyp.getRank());
-  auto gShapePtr = createExtractPtrFromMemRefFromValues(builder, loc, gShape);
   auto bMRTyp = srcPtTyp.getMemRefType();
+
+  auto gShapeMR =
+      createUnrankedMemRefFromElements(builder, loc, idxType, gShape);
   auto dtype = createDType(loc, builder, bMRTyp);
+
   auto lSrc = createLocalTensorOf(loc, builder, src);
   auto lDataPtr = builder.create<::imex::ptensor::ExtractRawPtrOp>(loc, lSrc);
+
   auto lOffs = createLocalOffsetsOf(loc, builder, src);
-  auto lOffsPtr = createExtractPtrFromMemRefFromValues(builder, loc, lOffs);
+  auto lOffsMR = createUnrankedMemRefFromElements(builder, loc, idxType, lOffs);
+
   auto bTensor = builder.create<::imex::ptensor::ExtractTensorOp>(loc, lSrc);
   auto bMRef =
       builder.create<::mlir::bufferization::ToMemrefOp>(loc, bMRTyp, bTensor);
   auto bMeta =
       builder.create<::mlir::memref::ExtractStridedMetadataOp>(loc, bMRef);
-  auto lShapePtr =
-      createExtractPtrFromMemRefFromValues(builder, loc, bMeta.getSizes());
-  auto lStridesPtr =
-      createExtractPtrFromMemRefFromValues(builder, loc, bMeta.getStrides());
+  auto lShapeMR =
+      createUnrankedMemRefFromElements(builder, loc, idxType, bMeta.getSizes());
+  auto lStridesMR = createUnrankedMemRefFromElements(builder, loc, idxType,
+                                                     bMeta.getStrides());
 
   // prepare out args
-  auto outOffsPtr = createExtractPtrFromMemRefFromValues(builder, loc, tOffs);
-  auto outSzsPtr = createExtractPtrFromMemRefFromValues(builder, loc, tSizes);
+  auto outOffsPtr =
+      createUnrankedMemRefFromElements(builder, loc, idxType, tOffs);
+  auto outSzsPtr =
+      createUnrankedMemRefFromElements(builder, loc, idxType, tSizes);
 
   if (nShape.size()) { // reshape
-    auto outRankV = createIndex(loc, builder, nShape.size());
-    auto nShapePtr = createExtractPtrFromMemRefFromValues(builder, loc, nShape);
-    return {srcRankV,    gShapePtr, dtype,     lDataPtr,   lOffsPtr, lShapePtr,
-            lStridesPtr, outRankV,  nShapePtr, outOffsPtr, outSzsPtr};
+    auto nShapePtr =
+        createUnrankedMemRefFromElements(builder, loc, idxType, nShape);
+    return {gShapeMR,   dtype,     lDataPtr,   lOffsMR,  lShapeMR,
+            lStridesMR, nShapePtr, outOffsPtr, outSzsPtr};
   } else { // repartition
-    return {srcRankV,  gShapePtr,   dtype,      lDataPtr, lOffsPtr,
-            lShapePtr, lStridesPtr, outOffsPtr, outSzsPtr};
+    return {gShapeMR, dtype,      lDataPtr,   lOffsMR,
+            lShapeMR, lStridesMR, outOffsPtr, outSzsPtr};
   }
 }
 
@@ -594,7 +601,6 @@ struct RuntimePrototypesOpConverter
     // auto dtype = rewriter.getI64Type();
     auto indexType = rewriter.getIndexType();
     auto dtypeType = rewriter.getIntegerType(sizeof(int) * 8);
-    auto rankType = indexType;
     auto opType =
         rewriter.getIntegerType(sizeof(::imex::ptensor::ReduceOpId) * 8);
     auto mrType = ::mlir::UnrankedMemRefType::get(rewriter.getI64Type(), {});
@@ -606,23 +612,20 @@ struct RuntimePrototypesOpConverter
                 {indexType});
     requireFunc(loc, rewriter, module, "_idtr_prank", {indexType}, {indexType});
     requireFunc(loc, rewriter, module, "_idtr_reduce_all",
-                {indexType, indexType, indexType, indexType, dtypeType, opType},
-                {});
+                {indexType, IdxmrType, IdxmrType, dtypeType, opType}, {});
     requireFunc(loc, rewriter, module, "_idtr_reshape",
-                // rank, gShapePtr, dtype,
-                // lDataPtr, lOffsPtr, lShapePtr, lStridesPtr,
-                // nRank, nShapePtr, offsPtr, szsPtr,
-                // outptr, team
-                {rankType, indexType, dtypeType, indexType, indexType,
-                 indexType, indexType, rankType, indexType, indexType,
-                 indexType, indexType, indexType},
-                {});
-    requireFunc(loc, rewriter, module, "_idtr_repartition",
-                // rank, gShape, dtype, lDataPtr, lOffs, lShape,
-                // lStrides, offs, szs, outPtr, team
-                {rankType, IdxmrType, dtypeType, indexType, IdxmrType,
+                // gShapePtr, dtype, lDataPtr, lOffsPtr,
+                // lShapePtr, lStridesPtr, nShapePtr, offsPtr,
+                // szsPtr, outptr, team
+                {IdxmrType, dtypeType, indexType, IdxmrType, IdxmrType,
                  IdxmrType, IdxmrType, IdxmrType, IdxmrType, indexType,
                  indexType},
+                {});
+    requireFunc(loc, rewriter, module, "_idtr_repartition",
+                // gShape, dtype, lDataPtr, lOffs, lShape,
+                // lStrides, offs, szs, outPtr, team
+                {IdxmrType, dtypeType, indexType, IdxmrType, IdxmrType,
+                 IdxmrType, IdxmrType, IdxmrType, indexType, indexType},
                 {});
     requireFunc(loc, rewriter, module, "_idtr_extractslice",
                 {indexType, indexType, indexType, indexType, indexType,
@@ -1090,7 +1093,6 @@ struct AllReduceOpConverter
     if (!mRefType)
       return ::mlir::failure();
 
-    auto rank = createIndex(loc, rewriter, mRefType.getRank());
     auto opV = rewriter.create<::mlir::arith::ConstantOp>(loc, op.getOp());
     auto dtype = createDType(loc, rewriter, mRefType);
 
@@ -1098,15 +1100,15 @@ struct AllReduceOpConverter
     auto meta =
         rewriter.create<::mlir::memref::ExtractStridedMetadataOp>(loc, mRef);
     auto dataPtr = createExtractPtrFromMemRef(rewriter, loc, mRef, meta);
-
-    auto sizePtr =
-        createExtractPtrFromMemRefFromValues(rewriter, loc, meta.getSizes());
-    auto stridePtr =
-        createExtractPtrFromMemRefFromValues(rewriter, loc, meta.getStrides());
+    auto idxType = rewriter.getIndexType();
+    auto sizeMR = createUnrankedMemRefFromElements(rewriter, loc, idxType,
+                                                   meta.getSizes());
+    auto strideMR = createUnrankedMemRefFromElements(rewriter, loc, idxType,
+                                                     meta.getStrides());
 
     rewriter.create<::mlir::func::CallOp>(
         loc, fsa, ::mlir::TypeRange(),
-        ::mlir::ValueRange({rank, dataPtr, sizePtr, stridePtr, dtype, opV}));
+        ::mlir::ValueRange({dataPtr, sizeMR, strideMR, dtype, opV}));
     rewriter.replaceOp(op, mRef);
     return ::mlir::success();
   }
@@ -1198,7 +1200,6 @@ struct RePartitionOpConverter
       return ::mlir::failure();
 
     auto loc = op.getLoc();
-    auto rank = dTTyp.getPTensorType().getRank();
     auto outPTTyp = op.getResult()
                         .getType()
                         .cast<::imex::dist::DistTensorType>()
@@ -1219,49 +1220,23 @@ struct RePartitionOpConverter
     }
 
     // Now it's time to get memrefs their pointers for the function call
-    auto lTnsr = createLocalTensorOf(loc, rewriter, base);
-    auto lOffs = createLocalOffsetsOf(loc, rewriter, base);
-    auto bMRTyp = dTTyp.getPTensorType().getMemRefType();
-    auto bTensor =
-        rewriter.create<::imex::ptensor::ExtractTensorOp>(loc, lTnsr);
-    auto bMRef = rewriter.create<::mlir::bufferization::ToMemrefOp>(loc, bMRTyp,
-                                                                    bTensor);
-    auto bMeta =
-        rewriter.create<::mlir::memref::ExtractStridedMetadataOp>(loc, bMRef);
-    auto lDataPtr =
-        rewriter.create<::imex::ptensor::ExtractRawPtrOp>(loc, lTnsr);
-    auto indexType = rewriter.getIndexType();
-    auto lShapeMR = createUnrankedMemRefFromElements(rewriter, loc, indexType,
-                                                     bMeta.getSizes());
-    auto lStridesMR = createUnrankedMemRefFromElements(rewriter, loc, indexType,
-                                                       bMeta.getStrides());
-    auto gShapeMR =
-        createUnrankedMemRefFromElements(rewriter, loc, indexType, gShape);
-    auto lOffsMR =
-        createUnrankedMemRefFromElements(rewriter, loc, indexType, lOffs);
-
-    // make memrefs for offset and sizes
-    auto offsMR =
-        createUnrankedMemRefFromElements(rewriter, loc, indexType, tOffs);
-    auto szsMR =
-        createUnrankedMemRefFromElements(rewriter, loc, indexType, tSizes);
+    auto args =
+        getArgsForReshape(loc, rewriter, gShape, base, {}, tOffs, tSizes);
 
     // create output tensor with target size
     auto outTnsr = rewriter.create<::imex::ptensor::CreateOp>(
         loc, outPTTyp, tSizes, ::imex::ptensor::fromMLIR(elTyp), nullptr,
-        nullptr,
-        nullptr); // FIXME device
+        nullptr, nullptr); // FIXME device
     auto outPtr =
         rewriter.create<::imex::ptensor::ExtractRawPtrOp>(loc, outTnsr);
 
+    args.emplace_back(outPtr);
+    args.emplace_back(team);
+
     // call our runtime function to redistribute data across processes
     auto fun = rewriter.getStringAttr("_idtr_repartition");
-    auto rankV = createIndex(loc, rewriter, rank);
-    auto dtype = createDType(loc, rewriter, bMRTyp);
-    (void)rewriter.create<::mlir::func::CallOp>(
-        loc, fun, ::mlir::TypeRange(),
-        ::mlir::ValueRange{rankV, gShapeMR, dtype, lDataPtr, lOffsMR, lShapeMR,
-                           lStridesMR, offsMR, szsMR, outPtr, team});
+    (void)rewriter.create<::mlir::func::CallOp>(loc, fun, ::mlir::TypeRange(),
+                                                args);
 
     // init dist tensor
     rewriter.replaceOp(op, createDistTensor(loc, rewriter, outTnsr, true,

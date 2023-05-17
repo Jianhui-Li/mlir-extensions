@@ -10,9 +10,9 @@ module {
 }
 // CHECK-LABEL: func.func private @_idtr_nprocs(index) -> index
 // CHECK-LABEL: func.func private @_idtr_prank(index) -> index
-// CHECK-LABEL: func.func private @_idtr_reduce_all(index, index, index, index, i32, i32)
-// CHECK-LABEL: func.func private @_idtr_reshape(index, index, i32, index, index, index, index, index, index, index, index, index, index)
-// CHECK-LABEL: func.func private @_idtr_repartition(index, memref<*xindex>, i32, index, memref<*xindex>, memref<*xindex>, memref<*xindex>, memref<*xindex>, memref<*xindex>, index, index)
+// CHECK-LABEL: func.func private @_idtr_reduce_all(index, memref<*xindex>, memref<*xindex>, i32, i32)
+// CHECK-LABEL: func.func private @_idtr_reshape(memref<*xindex>, i32, index, memref<*xindex>, memref<*xindex>, memref<*xindex>, memref<*xindex>, memref<*xindex>, memref<*xindex>, index, index)
+// CHECK-LABEL: func.func private @_idtr_repartition(memref<*xindex>, i32, index, memref<*xindex>, memref<*xindex>, memref<*xindex>, memref<*xindex>, memref<*xindex>, index, index)
 // CHECK-LABEL: func.func @test_nprocs(%arg0: index) -> index {
 // CHECK: @_idtr_nprocs(%arg0)
 
@@ -99,8 +99,8 @@ module {
     }
 }
 // CHECK-LABEL: func.func @test_allreduce(%arg0: memref<i64, strided<[], offset: ?>>) -> memref<i64, strided<[], offset: ?>> {
-// CHECK: memref.extract_aligned_pointer_as_index
 // CHECK: memref.extract_strided_metadata
+// CHECK: memref.extract_aligned_pointer_as_index
 // CHECK: call @_idtr_reduce_all
 
 // -----
