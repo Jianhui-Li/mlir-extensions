@@ -10,9 +10,27 @@ module {
 }
 // CHECK-LABEL: func.func private @_idtr_nprocs(index) -> index
 // CHECK-LABEL: func.func private @_idtr_prank(index) -> index
-// CHECK-LABEL: func.func private @_idtr_reduce_all(index, memref<*xindex>, memref<*xindex>, i32, i32)
-// CHECK-LABEL: func.func private @_idtr_reshape(memref<*xindex>, i32, index, memref<*xindex>, memref<*xindex>, memref<*xindex>, memref<*xindex>, memref<*xindex>, memref<*xindex>, index, index)
-// CHECK-LABEL: func.func private @_idtr_repartition(memref<*xindex>, i32, index, memref<*xindex>, memref<*xindex>, memref<*xindex>, memref<*xindex>, memref<*xindex>, index, index)
+// CHECK-NEXT: func.func private @_idtr_reduce_all_f64(memref<*xf64>, i32)
+// CHECK-NEXT: func.func private @_idtr_reduce_all_f32(memref<*xf32>, i32)
+// CHECK-NEXT: func.func private @_idtr_reduce_all_i64(memref<*xi64>, i32)
+// CHECK-NEXT: func.func private @_idtr_reduce_all_i32(memref<*xi32>, i32)
+// CHECK-NEXT: func.func private @_idtr_reduce_all_i16(memref<*xi16>, i32)
+// CHECK-NEXT: func.func private @_idtr_reduce_all_i8(memref<*xi8>, i32)
+// CHECK-NEXT: func.func private @_idtr_reduce_all_i1(memref<*xi1>, i32)
+// CHECK-NEXT: func.func private @_idtr_reshape_f64(memref<*xindex>, memref<*xindex>, memref<*xf64>, memref<*xindex>, memref<*xindex>, memref<*xf64>, index)
+// CHECK-NEXT: func.func private @_idtr_reshape_f32(memref<*xindex>, memref<*xindex>, memref<*xf32>, memref<*xindex>, memref<*xindex>, memref<*xf32>, index)
+// CHECK-NEXT: func.func private @_idtr_reshape_i64(memref<*xindex>, memref<*xindex>, memref<*xi64>, memref<*xindex>, memref<*xindex>, memref<*xi64>, index)
+// CHECK-NEXT: func.func private @_idtr_reshape_i32(memref<*xindex>, memref<*xindex>, memref<*xi32>, memref<*xindex>, memref<*xindex>, memref<*xi32>, index)
+// CHECK-NEXT: func.func private @_idtr_reshape_i16(memref<*xindex>, memref<*xindex>, memref<*xi16>, memref<*xindex>, memref<*xindex>, memref<*xi16>, index)
+// CHECK-NEXT: func.func private @_idtr_reshape_i8(memref<*xindex>, memref<*xindex>, memref<*xi8>, memref<*xindex>, memref<*xindex>, memref<*xi8>, index)
+// CHECK-NEXT: func.func private @_idtr_reshape_i1(memref<*xindex>, memref<*xindex>, memref<*xi1>, memref<*xindex>, memref<*xindex>, memref<*xi1>, index)
+// CHECK-NEXT: func.func private @_idtr_repartition_f64(memref<*xindex>, memref<*xindex>, memref<*xf64>, memref<*xindex>, memref<*xf64>, index)
+// CHECK-NEXT: func.func private @_idtr_repartition_f32(memref<*xindex>, memref<*xindex>, memref<*xf32>, memref<*xindex>, memref<*xf32>, index)
+// CHECK-NEXT: func.func private @_idtr_repartition_i64(memref<*xindex>, memref<*xindex>, memref<*xi64>, memref<*xindex>, memref<*xi64>, index)
+// CHECK-NEXT: func.func private @_idtr_repartition_i32(memref<*xindex>, memref<*xindex>, memref<*xi32>, memref<*xindex>, memref<*xi32>, index)
+// CHECK-NEXT: func.func private @_idtr_repartition_i16(memref<*xindex>, memref<*xindex>, memref<*xi16>, memref<*xindex>, memref<*xi16>, index)
+// CHECK-NEXT: func.func private @_idtr_repartition_i8(memref<*xindex>, memref<*xindex>, memref<*xi8>, memref<*xindex>, memref<*xi8>, index)
+// CHECK-NEXT: func.func private @_idtr_repartition_i1(memref<*xindex>, memref<*xindex>, memref<*xi1>, memref<*xindex>, memref<*xi1>, index)
 // CHECK-LABEL: func.func @test_nprocs(%arg0: index) -> index {
 // CHECK: @_idtr_nprocs(%arg0)
 
@@ -99,9 +117,8 @@ module {
     }
 }
 // CHECK-LABEL: func.func @test_allreduce(%arg0: memref<i64, strided<[], offset: ?>>) -> memref<i64, strided<[], offset: ?>> {
-// CHECK: memref.extract_strided_metadata
-// CHECK: memref.extract_aligned_pointer_as_index
-// CHECK: call @_idtr_reduce_all
+// CHECK: = memref.cast
+// CHECK: call @_idtr_reduce_all_i64
 
 // -----
 module {
@@ -146,7 +163,7 @@ module {
     }
 }
 // CHECK-LABEL: @test_repartition(%arg0: !ptensor.ptensor<?x?xi64>, %arg1: index, %arg2: index, %arg3: memref<2xindex>, %arg4: memref<2xindex>) -> (!ptensor.ptensor<?x?xi64>, index, index, memref<2xindex>, memref<2xindex>) {
-// CHECK: ptensor.extract_raw_ptr
+// CHECK: ptensor.extract_tensor
 // CHECK: memref.cast
 // CHECK: memref.cast
 // CHECK: memref.cast

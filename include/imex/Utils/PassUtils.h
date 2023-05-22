@@ -289,15 +289,23 @@ inline ::mlir::Value createMemRefFromElements(::mlir::OpBuilder &builder,
   return mr;
 }
 
+/// Create a cast op from ranked to unranked memref
+inline ::mlir::Value createUnrankedMemRefCast(::mlir::OpBuilder &builder,
+                                              ::mlir::Location loc,
+                                              ::mlir::Value mr,
+                                              ::mlir::Type elType) {
+  auto umrType = ::mlir::UnrankedMemRefType::get(elType, {});
+  auto umr = builder.create<::mlir::memref::CastOp>(loc, umrType, mr);
+  return umr;
+}
+
 /// Create a 1d UnrankedMemRef from given elements and elType
 inline ::mlir::Value
 createUnrankedMemRefFromElements(::mlir::OpBuilder &builder,
                                  ::mlir::Location loc, ::mlir::Type elType,
                                  ::mlir::ValueRange elts) {
   auto mr = createMemRefFromElements(builder, loc, elType, elts);
-  auto umrType = ::mlir::UnrankedMemRefType::get(elType, {});
-  auto umr = builder.create<::mlir::memref::CastOp>(loc, umrType, mr);
-  return umr;
+  return createUnrankedMemRefCast(builder, loc, mr, elType);
 }
 
 /// @return members of given 1d memref as individual values

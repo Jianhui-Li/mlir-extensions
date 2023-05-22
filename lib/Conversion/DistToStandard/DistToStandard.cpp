@@ -24,6 +24,7 @@
 #include <imex/Utils/PassUtils.h>
 #include <imex/Utils/PassWrapper.h>
 
+#include <llvm/Support/raw_os_ostream.h>
 #include <mlir/Dialect/Arith/IR/Arith.h>
 #include <mlir/Dialect/Bufferization/IR/Bufferization.h>
 #include <mlir/Dialect/ControlFlow/IR/ControlFlowOps.h>
@@ -40,6 +41,7 @@
 
 #include <array>
 #include <iostream>
+#include <sstream>
 
 #include "../PassDetail.h"
 
@@ -54,8 +56,23 @@ namespace imex {
 namespace dist {
 namespace {
 
+std::string mlirTypeToString(::mlir::Type type) {
+  std::ostringstream oss;
+  llvm::raw_os_ostream os(oss);
+  type.print(os);
+  os.flush();
+  return oss.str();
+}
+
+std::string mkTypedFunc(const ::std::string &base, ::mlir::Type elType) {
+  return base + "_" + mlirTypeToString(elType);
+}
+
 // create function prototype fo given function name, arg-types and
 // return-types
+// If NoneTypes are present, it will generate mutiple functions, one for
+// each integer/float type, where all the NoneTypes get replaced by the
+// respective UnrankedMemref<elType>
 inline void requireFunc(::mlir::Location &loc, ::mlir::OpBuilder &builder,
                         ::mlir::ModuleOp module, const char *fname,
                         ::mlir::TypeRange args, ::mlir::TypeRange results) {
@@ -63,9 +80,36 @@ inline void requireFunc(::mlir::Location &loc, ::mlir::OpBuilder &builder,
   // Insert before module terminator.
   builder.setInsertionPoint(module.getBody(),
                             std::prev(module.getBody()->end()));
-  auto funcType = builder.getFunctionType(args, results);
-  auto func = builder.create<::mlir::func::FuncOp>(loc, fname, funcType);
-  func.setPrivate();
+  auto dataMRType = ::mlir::NoneType::get(builder.getContext());
+  ::mlir::SmallVector<int> dmrs;
+  for (size_t i = 0; i < args.size(); ++i) {
+    if (args[i] == dataMRType)
+      dmrs.emplace_back(i);
+  }
+
+  auto decl = [&](auto _fname, auto _args) {
+    auto funcType = builder.getFunctionType(_args, results);
+    auto func = builder.create<::mlir::func::FuncOp>(loc, _fname, funcType);
+    func.setPrivate();
+  };
+
+  if (dmrs.empty()) {
+    decl(fname, args);
+  } else {
+    ::mlir::SmallVector<::mlir::Type> pargs(args);
+    for (auto t :
+         {::imex::ptensor::F64, ::imex::ptensor::F32, ::imex::ptensor::I64,
+          ::imex::ptensor::I32, ::imex::ptensor::I16, ::imex::ptensor::I8,
+          ::imex::ptensor::I1}) {
+      auto elType = ::imex::ptensor::toMLIR(builder, t);
+      auto mrtyp = ::mlir::UnrankedMemRefType::get(elType, {});
+      for (auto i : dmrs) {
+        pargs[i] = mrtyp;
+      }
+      auto tfname = mkTypedFunc(fname, elType);
+      decl(tfname, pargs);
+    }
+  }
 }
 
 // *******************************
@@ -291,7 +335,7 @@ static ::mlir::SmallVector<::mlir::Value, 12>
 getArgsForReshape(::mlir::Location loc, ::mlir::OpBuilder &builder,
                   const ::mlir::ValueRange &gShape, const ::mlir::Value &src,
                   const ::mlir::ValueRange &nShape, ::mlir::ValueRange tOffs,
-                  ::mlir::ValueRange tSizes) {
+                  ::mlir::Value outMR, ::mlir::Value team) {
   // prepare src args to function call
   auto idxType = builder.getIndexType();
   auto srcPtTyp =
@@ -300,38 +344,27 @@ getArgsForReshape(::mlir::Location loc, ::mlir::OpBuilder &builder,
 
   auto gShapeMR =
       createUnrankedMemRefFromElements(builder, loc, idxType, gShape);
-  auto dtype = createDType(loc, builder, bMRTyp);
 
   auto lSrc = createLocalTensorOf(loc, builder, src);
-  auto lDataPtr = builder.create<::imex::ptensor::ExtractRawPtrOp>(loc, lSrc);
+  auto bTensor = builder.create<::imex::ptensor::ExtractTensorOp>(loc, lSrc);
+  auto bMRef =
+      builder.create<::mlir::bufferization::ToMemrefOp>(loc, bMRTyp, bTensor);
+  auto lUMR =
+      createUnrankedMemRefCast(builder, loc, bMRef, bMRTyp.getElementType());
 
   auto lOffs = createLocalOffsetsOf(loc, builder, src);
   auto lOffsMR = createUnrankedMemRefFromElements(builder, loc, idxType, lOffs);
 
-  auto bTensor = builder.create<::imex::ptensor::ExtractTensorOp>(loc, lSrc);
-  auto bMRef =
-      builder.create<::mlir::bufferization::ToMemrefOp>(loc, bMRTyp, bTensor);
-  auto bMeta =
-      builder.create<::mlir::memref::ExtractStridedMetadataOp>(loc, bMRef);
-  auto lShapeMR =
-      createUnrankedMemRefFromElements(builder, loc, idxType, bMeta.getSizes());
-  auto lStridesMR = createUnrankedMemRefFromElements(builder, loc, idxType,
-                                                     bMeta.getStrides());
-
   // prepare out args
   auto outOffsPtr =
       createUnrankedMemRefFromElements(builder, loc, idxType, tOffs);
-  auto outSzsPtr =
-      createUnrankedMemRefFromElements(builder, loc, idxType, tSizes);
 
   if (nShape.size()) { // reshape
     auto nShapePtr =
         createUnrankedMemRefFromElements(builder, loc, idxType, nShape);
-    return {gShapeMR,   dtype,     lDataPtr,   lOffsMR,  lShapeMR,
-            lStridesMR, nShapePtr, outOffsPtr, outSzsPtr};
+    return {gShapeMR, lOffsMR, lUMR, nShapePtr, outOffsPtr, outMR, team};
   } else { // repartition
-    return {gShapeMR, dtype,      lDataPtr,   lOffsMR,
-            lShapeMR, lStridesMR, outOffsPtr, outSzsPtr};
+    return {gShapeMR, lOffsMR, lUMR, outOffsPtr, outMR, team};
   }
 }
 
@@ -372,6 +405,7 @@ struct ReshapeOpConverter
     auto gShape = createGlobalShapeOf(loc, rewriter, src);
     auto srcRank = srcPtTyp.getRank();
     auto outRank = nShape.size();
+    auto outPTType = retDtTyp.getPTensorType();
     auto elType = srcPtTyp.getElementType();
 
     // compute old chunk size per element in first dim
@@ -397,9 +431,10 @@ struct ReshapeOpConverter
     // Repartitioning is needed if any of the partitions' size is not a multiple
     // of the new chunksize There might be opts possible to avoid allreduce, for
     // now we just allreduce
+    auto i64Type = rewriter.getIntegerType(64);
     auto localPossible = lSz % nChunkSz;
-    auto lpMR = createMemRefFromElements(rewriter, loc, rewriter.getIndexType(),
-                                         {localPossible.get()});
+    auto lp = createIndexCast(loc, rewriter, localPossible.get(), i64Type);
+    auto lpMR = createMemRefFromElements(rewriter, loc, i64Type, {lp});
     auto rOp = rewriter.getIntegerAttr(
         rewriter.getIntegerType(sizeof(::imex::ptensor::SUM) * 8),
         ::imex::ptensor::SUM);
@@ -426,24 +461,27 @@ struct ReshapeOpConverter
           auto lPart = createLocalPartition(loc, builder, {}, team, nShape);
           ::mlir::SmallVector<::mlir::Value> tOffs(lPart.getLOffsets());
           auto tSizes = lPart.getLShape();
-          auto args = getArgsForReshape(loc, builder, gShape, src, nShape,
-                                        tOffs, tSizes);
 
           // create output tensor with target size
-          auto outTnsr = rewriter.create<::imex::ptensor::CreateOp>(
+          auto outPTnsr = rewriter.create<::imex::ptensor::CreateOp>(
               loc, tSizes, ::imex::ptensor::fromMLIR(elType), nullptr, nullptr,
               nullptr); // FIXME device
-          auto outPtr =
-              rewriter.create<::imex::ptensor::ExtractRawPtrOp>(loc, outTnsr);
+          auto outTnsr =
+              builder.create<::imex::ptensor::ExtractTensorOp>(loc, outPTnsr);
+          auto outMR = builder.create<::mlir::bufferization::ToMemrefOp>(
+              loc, outPTType.getMemRefType(), outTnsr);
+          auto outUMR = createUnrankedMemRefCast(builder, loc, outMR, elType);
 
-          args.emplace_back(outPtr);
-          args.emplace_back(team);
+          // prepare func args
+          auto args = getArgsForReshape(loc, builder, gShape, src, nShape,
+                                        tOffs, outUMR, team);
 
           // finally call the idt runtime
-          auto fun = rewriter.getStringAttr("_idtr_reshape");
+          auto fun =
+              rewriter.getStringAttr(mkTypedFunc("_idtr_reshape", elType));
           (void)rewriter.create<::mlir::func::CallOp>(
               loc, fun, ::mlir::TypeRange(), args);
-          tOffs.emplace_back(outTnsr.getResult());
+          tOffs.emplace_back(outPTnsr.getResult());
           builder.create<::mlir::scf::YieldOp>(loc, tOffs);
         },
 
@@ -600,33 +638,32 @@ struct RuntimePrototypesOpConverter
     ::mlir::ModuleOp module = ::mlir::cast<mlir::ModuleOp>(mod);
     // auto dtype = rewriter.getI64Type();
     auto indexType = rewriter.getIndexType();
-    auto dtypeType = rewriter.getIntegerType(sizeof(int) * 8);
     auto opType =
         rewriter.getIntegerType(sizeof(::imex::ptensor::ReduceOpId) * 8);
-    auto mrType = ::mlir::UnrankedMemRefType::get(rewriter.getI64Type(), {});
-    requireFunc(loc, rewriter, module, "printMemrefI64", {mrType}, {});
-    auto IdxmrType =
+    auto i64MRType = ::mlir::UnrankedMemRefType::get(rewriter.getI64Type(), {});
+    // requireFunc will generate functions for multiple typed memref-types
+    auto dataMRType = ::mlir::NoneType::get(rewriter.getContext());
+    requireFunc(loc, rewriter, module, "printMemrefI64", {i64MRType}, {});
+    auto idxMRType =
         ::mlir::UnrankedMemRefType::get(rewriter.getIndexType(), {});
-    requireFunc(loc, rewriter, module, "printMemrefInd", {IdxmrType}, {});
+    requireFunc(loc, rewriter, module, "printMemrefInd", {idxMRType}, {});
     requireFunc(loc, rewriter, module, "_idtr_nprocs", {indexType},
                 {indexType});
     requireFunc(loc, rewriter, module, "_idtr_prank", {indexType}, {indexType});
-    requireFunc(loc, rewriter, module, "_idtr_reduce_all",
-                {indexType, IdxmrType, IdxmrType, dtypeType, opType}, {});
+    requireFunc(loc, rewriter, module, "_idtr_reduce_all", {dataMRType, opType},
+                {});
     requireFunc(loc, rewriter, module, "_idtr_reshape",
-                // gShapePtr, dtype, lDataPtr, lOffsPtr,
-                // lShapePtr, lStridesPtr, nShapePtr, offsPtr,
-                // szsPtr, outptr, team
-                {IdxmrType, dtypeType, indexType, IdxmrType, IdxmrType,
-                 IdxmrType, IdxmrType, IdxmrType, IdxmrType, indexType,
-                 indexType},
+                // gShape, lOffs, lData,
+                // nShape, tOffs, outData, team
+                {idxMRType, idxMRType, dataMRType, idxMRType, idxMRType,
+                 dataMRType, indexType},
                 {});
-    requireFunc(loc, rewriter, module, "_idtr_repartition",
-                // gShape, dtype, lDataPtr, lOffs, lShape,
-                // lStrides, offs, szs, outPtr, team
-                {IdxmrType, dtypeType, indexType, IdxmrType, IdxmrType,
-                 IdxmrType, IdxmrType, IdxmrType, indexType, indexType},
-                {});
+    requireFunc(
+        loc, rewriter, module, "_idtr_repartition",
+        // gShape, lOffs, lData,
+        // tOffs, outData, team
+        {idxMRType, idxMRType, dataMRType, idxMRType, dataMRType, indexType},
+        {});
     requireFunc(loc, rewriter, module, "_idtr_extractslice",
                 {indexType, indexType, indexType, indexType, indexType,
                  indexType, indexType, indexType},
@@ -1094,21 +1131,13 @@ struct AllReduceOpConverter
       return ::mlir::failure();
 
     auto opV = rewriter.create<::mlir::arith::ConstantOp>(loc, op.getOp());
-    auto dtype = createDType(loc, rewriter, mRefType);
+    auto elType = mRefType.getElementType();
 
-    auto fsa = rewriter.getStringAttr("_idtr_reduce_all");
-    auto meta =
-        rewriter.create<::mlir::memref::ExtractStridedMetadataOp>(loc, mRef);
-    auto dataPtr = createExtractPtrFromMemRef(rewriter, loc, mRef, meta);
-    auto idxType = rewriter.getIndexType();
-    auto sizeMR = createUnrankedMemRefFromElements(rewriter, loc, idxType,
-                                                   meta.getSizes());
-    auto strideMR = createUnrankedMemRefFromElements(rewriter, loc, idxType,
-                                                     meta.getStrides());
+    auto fsa = rewriter.getStringAttr(mkTypedFunc("_idtr_reduce_all", elType));
+    auto dataUMR = createUnrankedMemRefCast(rewriter, loc, mRef, elType);
 
-    rewriter.create<::mlir::func::CallOp>(
-        loc, fsa, ::mlir::TypeRange(),
-        ::mlir::ValueRange({dataPtr, sizeMR, strideMR, dtype, opV}));
+    rewriter.create<::mlir::func::CallOp>(loc, fsa, ::mlir::TypeRange(),
+                                          ::mlir::ValueRange({dataUMR, opV}));
     rewriter.replaceOp(op, mRef);
     return ::mlir::success();
   }
@@ -1219,27 +1248,27 @@ struct RePartitionOpConverter
       tSizes = lPart.getLShape();
     }
 
-    // Now it's time to get memrefs their pointers for the function call
-    auto args =
-        getArgsForReshape(loc, rewriter, gShape, base, {}, tOffs, tSizes);
-
     // create output tensor with target size
-    auto outTnsr = rewriter.create<::imex::ptensor::CreateOp>(
+    auto outPTnsr = rewriter.create<::imex::ptensor::CreateOp>(
         loc, outPTTyp, tSizes, ::imex::ptensor::fromMLIR(elTyp), nullptr,
         nullptr, nullptr); // FIXME device
-    auto outPtr =
-        rewriter.create<::imex::ptensor::ExtractRawPtrOp>(loc, outTnsr);
+    auto outTnsr =
+        rewriter.create<::imex::ptensor::ExtractTensorOp>(loc, outPTnsr);
+    auto outMR = rewriter.create<::mlir::bufferization::ToMemrefOp>(
+        loc, outPTTyp.getMemRefType(), outTnsr);
+    auto outUMR = createUnrankedMemRefCast(rewriter, loc, outMR, elTyp);
 
-    args.emplace_back(outPtr);
-    args.emplace_back(team);
+    // Now it's time to get memrefs for the function call
+    auto args =
+        getArgsForReshape(loc, rewriter, gShape, base, {}, tOffs, outUMR, team);
 
     // call our runtime function to redistribute data across processes
-    auto fun = rewriter.getStringAttr("_idtr_repartition");
+    auto fun = rewriter.getStringAttr(mkTypedFunc("_idtr_repartition", elTyp));
     (void)rewriter.create<::mlir::func::CallOp>(loc, fun, ::mlir::TypeRange(),
                                                 args);
 
     // init dist tensor
-    rewriter.replaceOp(op, createDistTensor(loc, rewriter, outTnsr, true,
+    rewriter.replaceOp(op, createDistTensor(loc, rewriter, outPTnsr, true,
                                             gShape, tOffs, team));
 
     return ::mlir::success();
