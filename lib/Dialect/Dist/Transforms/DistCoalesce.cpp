@@ -395,7 +395,7 @@ struct DistCoalescePass : public ::imex::DistCoalesceBase<DistCoalescePass> {
     ::std::set<::imex::dist::RePartitionOp> rpToElimNew;
     ::mlir::SmallVector<::imex::dist::RePartitionOp> rpOps;
     ::mlir::SmallVector<::mlir::func::ReturnOp> retOps;
-    ::mlir::Operation *firstOp;
+    ::mlir::Operation *firstOp = nullptr;
 
     // store all RePartitionOps with target in vector
     root->walk([&](::mlir::Operation *op) {
