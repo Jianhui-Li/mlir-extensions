@@ -135,7 +135,7 @@ module {
 // CHECK: arith.select
 // CHECK: [[V0:%.*]] = arith.select
 // CHECK: scf.if [[V0]] -> (index, index) {
-// CHECK: scf.yield %15, %20 : index, index
+// CHECK: scf.yield %15, %22 : index, index
 // CHECK: else
 // CHECK: scf.yield %10, %c0_1 : index, index
 // CHECK: return

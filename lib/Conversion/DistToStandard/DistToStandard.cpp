@@ -1055,9 +1055,9 @@ struct LocalTargetOfSliceOpConverter
     auto lEnd = lOff + easyIdx(loc, rewriter, lExtnt);
 
     // check if requested slice fully before local partition
-    auto beforeLocal = slcEnd.ult(lOff);
+    auto beforeLocal = slcEnd.slt(lOff);
     // check if requested slice fully behind local partition
-    auto behindLocal = lEnd.ule(slcOff);
+    auto behindLocal = lEnd.sle(slcOff);
     // check if there is overlap
     auto overlaps =
         beforeLocal.select(eFalse, behindLocal.select(eFalse, eTrue));
@@ -1068,10 +1068,11 @@ struct LocalTargetOfSliceOpConverter
           // start index within our local part if slice starts before lpart
           auto start = (lOff - slcOff + slcStride - oneIdx) / slcStride;
           // start is 0 if starts within local part
-          start = slcOff.ult(lOff).select(start, zeroIdx);
+          start = slcOff.slt(lOff).select(start, zeroIdx);
           // now compute size within our local part
-          auto sz =
-              (lEnd.min(slcEnd) - (slcOff + (start * slcStride))) / slcStride;
+          auto sz = (lEnd.min(slcEnd) - (slcOff + (start * slcStride)) +
+                     slcStride - oneIdx) /
+                    slcStride;
           builder.create<::mlir::scf::YieldOp>(
               loc, ::mlir::ValueRange{start.get(), sz.get()});
         },
