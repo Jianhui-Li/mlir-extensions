@@ -132,18 +132,41 @@ struct DistCoalescePass : public ::imex::DistCoalesceBase<DistCoalescePass> {
   }
 
   /// @return if op1 can be moved directly after op2
+  /// @param [out] toBeMoved The op gets added here together with all the
+  /// dependences which also need to be moved
+  /// @param [in] dep set to true if examining a dependent op (these are allowed
+  /// to dominate op2!) This is a fairly simple recursive search. A move with
+  /// deps might still be possible even if returning false. toBeMoved is filled
+  /// bottom up, depth-first
   bool canMoveAfter(::mlir::DominanceInfo &dom, ::mlir::Operation *op1,
-                    ::mlir::Operation *op2) {
-    assert(op2 != op1);
+                    ::mlir::Operation *op2,
+                    ::mlir::SmallVector<::mlir::Operation *> &toBeMoved,
+                    bool dep = false) {
+    if (op2 == op1) {
+      assert(dep);
+      return true;
+    }
+
+    // we cannot move the top-level op unless op2 dominates it
+    // if so, we recurse into the operands since they might need to move as well
     if (dom.dominates(op2, op1)) {
       for (auto o : op1->getOperands()) {
         auto dOp = o.getDefiningOp();
-        if (dOp && !dom.dominates(dOp, op2)) {
+        if (dOp && !canMoveAfter(dom, dOp, op2, toBeMoved, true)) {
+          // operand cannot move and does not dominate op2
           return false;
         }
       }
-    } else
+    } else if (dep) {
+      // operands/dependencies are ok if they domniate op2
+      return dom.dominates(op1, op2);
+    } else {
+      // op1 does not dominate op2 nor vice versa (op1 is top-level!)
       return false;
+    }
+
+    // we are good to move
+    toBeMoved.emplace_back(op1);
     return true;
   }
 
@@ -159,6 +182,7 @@ struct DistCoalescePass : public ::imex::DistCoalesceBase<DistCoalescePass> {
     auto szs = op.getTargetSizes();
     if (offs.size() > 0) {
       assert(offs.size() == szs.size());
+      ::mlir::SmallVector<::mlir::Operation *> toBeMoved;
       for (size_t i = 0; i < offs.size(); ++i) {
         if ((tOffs[i] != offs[i] || tSizes[i] != szs[i]) && !op->hasOneUse()) {
           // existing but different target -> need a new repartition for our
@@ -169,9 +193,14 @@ struct DistCoalescePass : public ::imex::DistCoalesceBase<DistCoalescePass> {
           auto tmp = tOffs[0].getDefiningOp();
           auto &dom = this->getAnalysis<::mlir::DominanceInfo>();
           if (!dom.dominates(tmp, op)) {
-            if (canMoveAfter(dom, tmp, op)) {
-              tmp->moveAfter(op);
-              builder.setInsertionPointAfter(tmp);
+            toBeMoved.resize(0);
+            if (canMoveAfter(dom, tmp, op, toBeMoved)) {
+              ::mlir::Operation *curr = op;
+              for (auto dop : toBeMoved) {
+                dop->moveAfter(curr);
+                curr = dop;
+              }
+              builder.setInsertionPointAfter(curr);
             } else {
               assert(!"Not implemented");
             }
@@ -231,10 +260,16 @@ struct DistCoalescePass : public ::imex::DistCoalesceBase<DistCoalescePass> {
       assert(ltosOp);
       auto fOp = ltosOp.getDTensor().getDefiningOp();
       assert(fOp);
-      if (canMoveAfter(dom, defOp2, fOp)) {
-        defOp2->moveAfter(fOp);
+
+      ::mlir::SmallVector<::mlir::Operation *> toBeMoved;
+      if (canMoveAfter(dom, defOp2, fOp, toBeMoved)) {
+        ::mlir::Operation *curr = fOp;
+        for (auto dop : toBeMoved) {
+          dop->moveAfter(curr);
+          curr = dop;
+        }
       } else {
-        // this is pretty strict, we might miss potential
+        // advanced analysis might be able to do more
         return 0;
       }
     }

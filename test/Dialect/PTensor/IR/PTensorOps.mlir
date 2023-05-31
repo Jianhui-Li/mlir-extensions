@@ -80,3 +80,13 @@ func.func @test_reduction(%arg0: !ptensor.ptensor<?xi64>) -> si64 {
 }
 // CHECK-LABEL: @test_reduction
 // CHECK-NEXT: "ptensor.reduction"(%arg0) {op = 4 : i32} : (!ptensor.ptensor<?xi64>) -> !ptensor.ptensor<si64>
+
+// -----
+func.func @test_dim(%arg0: !ptensor.ptensor<?xi64>) -> index {
+    %c0 = arith.constant 0 : index
+    %1 = ptensor.dim %arg0 %c0 : !ptensor.ptensor<?xi64> -> index
+    return %1 : index
+}
+// CHECK-LABEL: func.func @test_dim
+// CHECK: [[V0:%.*]] = ptensor.dim
+// CHECK-NEXT: return [[V0]] : index

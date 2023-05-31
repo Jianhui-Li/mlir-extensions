@@ -215,12 +215,12 @@ def DimOp : PTensor_Op<"dim", [
     If the dimension index is out of bounds the behavior is undefined.
   }];
 
-  let arguments = (ins PTensor_PTensor:$source,
+  let arguments = (ins AnyType:$source,
                        Index:$index);
   let results = (outs Index:$result);
 
   let assemblyFormat = [{
-    attr-dict $source `,` $index `:` qualified(type($source))
+    $source $index attr-dict `:` qualified(type($source)) `->` qualified(type($result))
   }];
 
   let builders = [
@@ -241,7 +241,7 @@ def DimOp : PTensor_Op<"dim", [
     ::mlir::Speculation::Speculatability getSpeculatability();
   }];
 
-  let hasVerifier = 1;
+  // let hasVerifier = 1;
   // let hasFolder = 1;
   let hasCanonicalizer = 1;
 }

@@ -251,6 +251,25 @@ struct SubviewLowering
   }
 };
 
+/// Convert PTensor's DimOp to tensor::DimOp.
+struct DimOpLowering : public mlir::OpConversionPattern<imex::ptensor::DimOp> {
+  using OpConversionPattern::OpConversionPattern;
+
+  mlir::LogicalResult
+  matchAndRewrite(imex::ptensor::DimOp op,
+                  imex::ptensor::DimOp::Adaptor adaptor,
+                  mlir::ConversionPatternRewriter &rewriter) const override {
+    auto srcTnsr = adaptor.getSource();
+    auto srcType = srcTnsr.getType().dyn_cast<::mlir::TensorType>();
+    if (!srcType)
+      return mlir::failure();
+
+    rewriter.replaceOpWithNewOp<::mlir::tensor::DimOp>(op, srcTnsr,
+                                                       adaptor.getIndex());
+    return mlir::success();
+  }
+};
+
 /// Convert PTensor's LoadOp to tensor::ExtractOp.
 /// Adjusted from NTensor
 struct LoadOpLowering
@@ -1105,7 +1124,7 @@ struct ConvertPTensorToLinalgPass
     patterns
         .insert<MkPTensorLowering, ExtractTensorLowering, ExtractRawPtrLowering,
                 SubviewLowering, InsertSliceLowering, LinSpaceLowering,
-                LoadOpLowering, CreateLowering, EWBinOpLowering,
+                LoadOpLowering, CreateLowering, EWBinOpLowering, DimOpLowering,
                 EWUnyOpLowering, ReductionOpLowering, ReshapeLowering>(
             typeConverter, &ctxt);
 

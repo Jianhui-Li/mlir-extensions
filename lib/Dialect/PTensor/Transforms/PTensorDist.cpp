@@ -159,11 +159,36 @@ struct DistLoadOpRWP : public RecOpRewritePattern<::imex::ptensor::LoadOp> {
     auto src = op.getArray();
     auto inpDTTyp = src.getType().dyn_cast<::imex::dist::DistTensorType>();
 
-    if (inpDTTyp) {
+    if (!inpDTTyp) {
       return ::mlir::failure();
     }
 
     rewriter.replaceOpWithNewOp<::imex::dist::LoadOp>(op, src, op.getIndices());
+
+    return ::mlir::success();
+  }
+};
+
+/// Rewriting ::imex::ptensor::DimOp by simply replacing
+/// with the dim of the global shape.
+struct DistDimOpRWP : public RecOpRewritePattern<::imex::ptensor::DimOp> {
+  using RecOpRewritePattern::RecOpRewritePattern;
+
+  ::mlir::LogicalResult
+  matchAndRewrite(::imex::ptensor::DimOp op,
+                  ::mlir::PatternRewriter &rewriter) const override {
+
+    // get input and type
+    auto src = op.getSource();
+    auto idx = op.getConstantIndex();
+    auto inpDTTyp = src.getType().dyn_cast<::imex::dist::DistTensorType>();
+
+    if (!inpDTTyp || idx >= inpDTTyp.getRank() || !idx) {
+      return ::mlir::failure();
+    }
+
+    auto gShape = createGlobalShapeOf(op.getLoc(), rewriter, src);
+    rewriter.replaceOp(op, gShape[*idx]);
 
     return ::mlir::success();
   }
@@ -511,7 +536,7 @@ struct PTensorDistPass : public ::imex::PTensorDistBase<PTensorDistPass> {
     ::mlir::FrozenRewritePatternSet patterns;
     insertPatterns<DistLinSpaceOpRWP, DistCreateOpRWP, DistEWBinOpRWP,
                    DistReshapeOpRWP, DistEWUnyOpRWP, DistReductionOpRWP,
-                   DistExtractTensorOpRWP, DistSubviewOpRWP,
+                   DistExtractTensorOpRWP, DistSubviewOpRWP, DistDimOpRWP,
                    DistInsertSliceOpRWP>(getContext(), patterns);
     (void)::mlir::applyPatternsAndFoldGreedily(this->getOperation(), patterns);
   }

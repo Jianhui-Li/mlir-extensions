@@ -71,3 +71,13 @@ func.func @test_reshape(%arg0: i64, %arg1: i64, %arg2: i64) -> i64 {
 // CHECK: [[C3:%.*]] = arith.constant 3 : index
 // CHECK: [[V1:%.*]] = dist.init_dist_tensor
 // CHECK: "ptensor.reshape"([[V1]], [[C1]], [[C3]]) : (!dist.dtensor<<?xi64>>, index, index) -> !dist.dtensor<<?x?xi64>>
+
+// -----
+func.func @test_dim(%arg0: !dist.dtensor<<?x?xi64>>) -> index {
+    %c0 = arith.constant 0 : index
+    %1 = ptensor.dim %arg0 %c0 : !dist.dtensor<<?x?xi64>> -> index
+    return %1 : index
+}
+// CHECK-LABEL: func.func @test_dim
+// CHECK: [[V1:%.*]]:2 = "dist.global_shape_of"(%arg0)
+// CHECK-NEXT: return [[V1]]#0 : index

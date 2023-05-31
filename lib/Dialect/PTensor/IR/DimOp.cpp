@@ -55,22 +55,22 @@ mlir::Speculation::Speculatability imex::ptensor::DimOp::getSpeculatability() {
   return mlir::Speculation::Speculatable;
 }
 
-mlir::LogicalResult imex::ptensor::DimOp::verify() {
-  // Assume unknown index to be in range.
-  llvm::Optional<int64_t> index = getConstantIndex();
-  if (!index)
-    return mlir::success();
+// mlir::LogicalResult imex::ptensor::DimOp::verify() {
+//   // Assume unknown index to be in range.
+//   llvm::Optional<int64_t> index = getConstantIndex();
+//   if (!index)
+//     return mlir::success();
 
-  // Check that constant index is not knowingly out of range.
-  auto type = getSource().getType();
-  if (auto tensorType = type.dyn_cast<imex::ptensor::PTensorType>()) {
-    if (*index >= tensorType.getRank())
-      return emitOpError("index is out of range");
-  } else {
-    llvm_unreachable("expected operand with array type");
-  }
-  return mlir::success();
-}
+//   // Check that constant index is not knowingly out of range.
+//   auto type = getSource().getType();
+//   if (auto tensorType = type.dyn_cast<imex::ptensor::PTensorType>()) {
+//     if (*index >= tensorType.getRank())
+//       return emitOpError("index is out of range");
+//   } else {
+//     llvm_unreachable("expected operand with array type");
+//   }
+//   return mlir::success();
+// }
 
 namespace {
 // TODO: upstream
