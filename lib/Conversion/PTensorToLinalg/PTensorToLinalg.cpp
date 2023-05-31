@@ -845,12 +845,38 @@ static BodyType getBodyBuilder(::imex::ptensor::EWUnyOpId binOp,
   };
 }
 
+/// Lower unary operations which are not natively provided in any of the MLIR
+/// dialects.
+/// @return resulting non-null value if the operation was lowered, null-value
+/// otherwise
+::mlir::Value createAggUnaryOp(::mlir::Location loc,
+                               ::imex::ptensor::EWUnyOpId unyOpId,
+                               ::mlir::ConversionPatternRewriter &rewriter,
+                               ::imex::ptensor::PTensorType returnType,
+                               ::mlir::Value src) {
+  switch (unyOpId) {
+  case ptensor::SQUARE:
+    return rewriter
+        .create<::imex::ptensor::EWBinOp>(
+            loc, returnType,
+            getIntAttr<32>(rewriter, ::imex::ptensor::MULTIPLY), src, src)
+        .getResult();
+  default:
+    break;
+  };
+  return ::mlir::Value();
+}
+
+/// Lower unary operations which are provided only by TOSA (and not by math or
+/// arith).
+/// @return resulting non-null value if the operation was lowered, null-value
+/// otherwise
 ::mlir::Value createUnaryTosaOp(::mlir::Location loc,
-                                ::imex::ptensor::EWUnyOpId binOpId,
+                                ::imex::ptensor::EWUnyOpId unyOpId,
                                 ::mlir::ConversionPatternRewriter &rewriter,
                                 ::mlir::TensorType returnType,
                                 ::mlir::Value src) {
-  switch (binOpId) {
+  switch (unyOpId) {
   case ptensor::LOGICAL_NOT:
     return rewriter.create<mlir::tosa::LogicalNotOp>(loc, returnType, src)
         .getResult();
@@ -873,57 +899,59 @@ struct EWUnyOpLowering
                   ::imex::ptensor::EWUnyOp::Adaptor adaptor,
                   ::mlir::ConversionPatternRewriter &rewriter) const override {
     auto loc = op.getLoc();
+    auto ptSrc = op.getSrc();
     // We expect to lower PTensors
-    auto srcPtTyp =
-        op.getSrc().getType().dyn_cast<::imex::ptensor::PTensorType>();
+    auto srcPtTyp = ptSrc.getType().dyn_cast<::imex::ptensor::PTensorType>();
     if (!srcPtTyp) {
       // FIXME type casting
       return ::mlir::failure();
     }
 
-    auto resType = op->getResult(0)
-                       .getType()
-                       .cast<::imex::ptensor::PTensorType>()
-                       .getTensorType();
-
-    // get the input as tensors
-    auto src = adaptor.getSrc();
-    auto srcTnsr = src.getType().cast<::mlir::TensorType>();
-
-    // we expect tensorType as operands
-    auto elTyp = srcTnsr.getElementType();
-    auto rank = srcTnsr.getRank();
-
-    const ::imex::ptensor::EWUnyOpId binOpId =
+    const ::imex::ptensor::EWUnyOpId unyOpId =
         (::imex::ptensor::EWUnyOpId)adaptor.getOp()
             .cast<::mlir::IntegerAttr>()
             .getInt();
+    auto resPtType =
+        op->getResult(0).getType().cast<::imex::ptensor::PTensorType>();
 
+    // generic lowering of non-MLIR-native ops
     ::mlir::Value newOp =
-        createUnaryTosaOp(loc, binOpId, rewriter, resType, src);
+        createAggUnaryOp(loc, unyOpId, rewriter, resPtType, ptSrc);
 
-    if (!newOp) {
-      // generate linalg.generic loop
+    if (!newOp) { // not lowered yet
+      // get the input/output tensor types
+      auto src = adaptor.getSrc();
+      auto srcTnsr = src.getType().cast<::mlir::TensorType>();
+      auto resType = resPtType.getTensorType();
 
-      // create output tensor with right dimensions
-      auto tensor = createEmptyTensor(rewriter, loc, resType, {src});
+      // we expect tensorType as operands
+      auto elTyp = srcTnsr.getElementType();
+      auto rank = srcTnsr.getRank();
 
-      // we need affine maps for linalg::generic
-      const ::mlir::AffineMap map = ::mlir::AffineMap::getMultiDimIdentityMap(
-          rank, rewriter.getContext());
-      ::mlir::SmallVector<::mlir::AffineMap> maps(2, map);
-      // we just make all dims parallel
-      ::mlir::SmallVector<mlir::utils::IteratorType> iterators(
-          rank, ::mlir::utils::IteratorType::parallel);
+      // try to lower to TOSA
+      newOp = createUnaryTosaOp(loc, unyOpId, rewriter, resType, src);
 
-      // get the body builder for our binop and create genericop
-      // FIXME: make createParFor ready for this
-      auto bodyBuilder = getBodyBuilder(binOpId, elTyp);
-      newOp = rewriter
-                  .create<::mlir::linalg::GenericOp>(
-                      loc, tensor.getType(), ::mlir::ValueRange{src}, tensor,
-                      maps, iterators, bodyBuilder)
-                  .getResult(0);
+      if (!newOp) { // still not lowered: generate linalg.generic loop
+        // create output tensor with right dimensions
+        auto tensor = createEmptyTensor(rewriter, loc, resType, {src});
+
+        // we need affine maps for linalg::generic
+        const ::mlir::AffineMap map = ::mlir::AffineMap::getMultiDimIdentityMap(
+            rank, rewriter.getContext());
+        ::mlir::SmallVector<::mlir::AffineMap> maps(2, map);
+        // we just make all dims parallel
+        ::mlir::SmallVector<mlir::utils::IteratorType> iterators(
+            rank, ::mlir::utils::IteratorType::parallel);
+
+        // get the body builder for our binop and create genericop
+        // FIXME: make createParFor ready for this
+        auto bodyBuilder = getBodyBuilder(unyOpId, elTyp);
+        newOp = rewriter
+                    .create<::mlir::linalg::GenericOp>(
+                        loc, tensor.getType(), ::mlir::ValueRange{src}, tensor,
+                        maps, iterators, bodyBuilder)
+                    .getResult(0);
+      }
     }
 
     rewriter.replaceOp(op, newOp);
