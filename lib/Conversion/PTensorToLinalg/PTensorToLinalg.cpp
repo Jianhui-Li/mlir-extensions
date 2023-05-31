@@ -148,13 +148,16 @@ struct ExtractTensorLowering
         } else
           break;
       }
-      assert(inpOp);
-      assert(inpOp.getOperands().front().getType().isa<::mlir::MemRefType>());
+      auto oprnd = inpOp.getOperands().front();
+      if (!inpOp || !(oprnd.getType().isa<::mlir::TensorType>() ||
+                      oprnd.getType().isa<::mlir::MemRefType>())) {
+        return ::mlir::failure();
+      }
       // std::cerr << "mrOpOp: ";
       // inpOp->getOperand(0).getDefiningOp()->getOperand(0).dump(); std::cerr
       // << "mrOp: "; inpOp->getOperands().front().dump(); std::cerr << "mr: ";
       // inpOp->dump();
-      rewriter.replaceOp(op, inpOp.getOperands()[0]);
+      rewriter.replaceOp(op, oprnd);
     }
     return ::mlir::success();
   }

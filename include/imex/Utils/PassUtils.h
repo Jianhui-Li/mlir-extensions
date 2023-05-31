@@ -216,22 +216,46 @@ inline auto createEmptyTensor(::mlir::OpBuilder &builder, ::mlir::Location loc,
 inline auto createEmptyTensor(::mlir::OpBuilder &builder, ::mlir::Location loc,
                               ::mlir::TensorType resType,
                               const ::mlir::ValueRange &operands) {
-  ::mlir::SmallVector<::mlir::Value> dynDims(resType.getRank());
-  auto elType = resType.getElementType();
+
+  ::mlir::SmallVector<::mlir::Value> dynamicSizes(resType.getRank());
+  ::mlir::SmallVector<int64_t> staticSizes(resType.getRank(), 0);
+
+  // for each operand extract dispatch static and dynamic sizes
+  // and define new shape as follows:
+  // - dynamic always overwrites static sizes of other operands
+  // - static sizes > 1 overwrite other static sizes
+  // - static sizes == 1 remain only if all operands agree
   for (auto arg : operands) {
-    auto operandTy = arg.getType().cast<::mlir::ShapedType>();
-    for (int i = 0; i < operandTy.getRank(); i++) {
-      if (operandTy.isDynamicDim(i) && !dynDims[i])
-        dynDims[i] = builder.create<::mlir::tensor::DimOp>(loc, arg, i);
+    auto shapedTy = arg.getType().cast<::mlir::ShapedType>();
+    for (int i = 0; i < shapedTy.getRank(); i++) {
+      if (shapedTy.isDynamicDim(i)) {
+        auto dimOp = builder.create<::mlir::tensor::DimOp>(loc, arg, i);
+        dynamicSizes[i] = createIndexCast(loc, builder, dimOp);
+        staticSizes[i] = ::mlir::ShapedType::kDynamic;
+      } else {
+        auto v = shapedTy.getDimSize(i);
+        assert(v > 0);
+        if (staticSizes[i] != ::mlir::ShapedType::kDynamic &&
+            (v > 1 || staticSizes[i] == 0)) {
+          staticSizes[i] = v;
+        }
+      }
     }
   }
+
+  // now build the range of dynamic sizes
   ::mlir::SmallVector<::mlir::Value> filteredDims;
-  for (auto value : dynDims) {
+  for (auto value : dynamicSizes) {
     if (value) {
       filteredDims.push_back(value);
     }
   }
-  return createEmptyTensor(builder, loc, elType, filteredDims);
+
+  // create empty tensor with dims as determined above
+  return builder
+      .create<::mlir::tensor::EmptyOp>(loc, staticSizes,
+                                       resType.getElementType(), filteredDims)
+      .getResult();
 }
 
 /// get dyn-sized mlir::RankedTensorType for given rank and elType
